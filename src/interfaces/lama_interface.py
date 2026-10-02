@@ -7,6 +7,7 @@ import cv2
 from PIL import Image
 
 # 导入路径助手
+from src.shared import constants
 from src.shared.path_helpers import resource_path
 from src.shared.memory_errors import is_memory_allocation_error
 from src.shared.user_logging import user_log
@@ -434,6 +435,18 @@ def lama_clean_object(image, mask, lama_model='lama_mpe', disable_resize=False):
     raise ValueError(f"未知的 LaMA 模型: {lama_model}")
 
 
+def _flat_surrounding_color(crop, local, crop_target, max_std):
+    """周圍一圈是純色（白色氣泡等）時回傳該顏色，否則回傳 None 交給 LaMa。"""
+    ring = cv2.dilate(local.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+    ring &= ~crop_target
+    pixels = crop[ring]
+    if len(pixels) < 30:
+        return None
+    if float(pixels.astype(np.float32).std(axis=0).max()) > max_std:
+        return None
+    return np.median(pixels, axis=0).astype(np.uint8)
+
+
 def _clean_lama_regions(image, mask, lama_model, disable_resize):
     """Repair independent local targets from the same source, in FP32."""
     import torch
@@ -452,14 +465,26 @@ def _clean_lama_regions(image, mask, lama_model, disable_resize):
         'litelama': get_litelama_inpainter,
         'lama_manga': get_lama_manga_inpainter,
     }
-    inpainter = loaders[lama_model]()
-    inpainter.load()
-    cuda = str(inpainter._device).startswith('cuda')
-    # Different crop shapes otherwise retain large CUDA/FFT caches for a whole page.
-    if cuda:
-        fft_cache = torch.backends.cuda.cufft_plan_cache
-        previous_cache_limit = fft_cache.max_size
-        fft_cache.max_size = min(previous_cache_limit, 32)
+    flat_std = float(getattr(constants, 'LAMA_FLAT_FILL_MAX_STD', 0) or 0)
+    inpainter = None
+    cuda = False
+    fft_cache = None
+    previous_cache_limit = None
+
+    def ensure_inpainter():
+        # 只有真的需要模型時才載入（整頁都是純色氣泡就完全不跑 LaMa）
+        nonlocal inpainter, cuda, fft_cache, previous_cache_limit
+        if inpainter is None:
+            inpainter = loaders[lama_model]()
+            inpainter.load()
+            cuda = str(inpainter._device).startswith('cuda')
+            # Different crop shapes otherwise retain large CUDA/FFT caches for a whole page.
+            if cuda:
+                fft_cache = torch.backends.cuda.cufft_plan_cache
+                previous_cache_limit = fft_cache.max_size
+                fft_cache.max_size = min(previous_cache_limit, 32)
+        return inpainter
+
     try:
         for label in range(1, count):
             x, y, w, h = stats[label, :4]
@@ -469,6 +494,14 @@ def _clean_lama_regions(image, mask, lama_model, disable_resize):
             right, bottom = min(width, x+dx+tw+128), min(height, y+dy+th+128)
             local = target[top:bottom, left:right] & (labels[top:bottom, left:right] == label)
             crop = source[top:bottom, left:right]
+            flat_color = (
+                _flat_surrounding_color(crop, local, target[top:bottom, left:right], flat_std)
+                if flat_std > 0 else None
+            )
+            if flat_color is not None:
+                output[top:bottom, left:right][local] = flat_color
+                continue
+            inpainter = ensure_inpainter()
             crop_mask = local.astype(np.uint8) * 255
             ch, cw = local.shape
             scale = min(1, 2048 / max(ch, cw), math.sqrt(2_250_000 / (ch*cw)))
@@ -486,7 +519,7 @@ def _clean_lama_regions(image, mask, lama_model, disable_resize):
                 )
             output[top:bottom, left:right][local] = repaired[local]
     finally:
-        if cuda:
+        if cuda and fft_cache is not None:
             fft_cache.max_size = previous_cache_limit
     return Image.fromarray(output)
 

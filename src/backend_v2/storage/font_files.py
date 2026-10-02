@@ -23,7 +23,27 @@ DISPLAY_NAMES = {
     'msyhbd.ttc': '微软雅黑粗体', 'simyou.ttf': '幼圆', 'stfangso.ttf': '仿宋',
     'sthupo.ttf': '华文琥珀', 'stxihei.ttf': '华文细黑', 'simkai.ttf': '中易楷体',
     'simfang.ttf': '中易仿宋', 'simhei.ttf': '中易黑体', 'simli.ttf': '中易隶书',
+    'msjhbd.ttc': '微軟正黑體 粗體', 'msjh.ttc': '微軟正黑體',
 }
+
+# Windows 內建的繁體字型（台港標準字形，漢化漫畫對白常用的粗黑體）。
+# 存在時複製到字型目錄並作為新安裝的預設字型；不隨程式散佈。
+SYSTEM_ZH_HANT_FONTS = ('msjhbd.ttc', 'msjh.ttc')
+
+
+def _system_font_dirs() -> list[Path]:
+    windir = os.environ.get('WINDIR') or os.environ.get('SystemRoot')
+    return [Path(windir) / 'Fonts'] if windir else []
+
+
+def system_zh_hant_fonts() -> list[Path]:
+    found = []
+    for folder in _system_font_dirs():
+        for name in SYSTEM_ZH_HANT_FONTS:
+            path = folder / name
+            if path.is_file():
+                found.append(path)
+    return found
 
 
 @dataclass(frozen=True)
@@ -40,8 +60,10 @@ def bundled_font_files() -> tuple[FontFile, ...]:
     paths = sorted((p for p in source.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_FONT_SUFFIXES), key=lambda p: p.name.casefold())
     if not paths:
         raise RuntimeError('程序字体目录为空')
+    system = [p for p in system_zh_hant_fonts() if p.name.casefold() not in {b.name.casefold() for b in paths}]
+    paths = sorted(paths + system, key=lambda p: p.name.casefold())
     preferred = Path(DEFAULT_FONT_FAMILY.replace('\\', '/')).name.casefold()
-    default = next((p for p in paths if p.name.casefold() == preferred), paths[0])
+    default = system[0] if system else next((p for p in paths if p.name.casefold() == preferred), paths[0])
     catalog = [FontFile(
         DEFAULT_FONT_ID if p == default else str(uuid.uuid5(FONT_NAMESPACE, p.name.casefold())),
         f'fonts/shared/{p.name}', DISPLAY_NAMES.get(p.name.casefold(), p.stem), p,
@@ -79,6 +101,7 @@ def prepare_font_directory(root: Path) -> None:
     reject_links(folder)
     reject_links(shared)
     if shared.is_dir():
+        _install_system_fonts(shared)
         return
     folder.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.install-', dir=folder) as staging:
@@ -91,6 +114,18 @@ def prepare_font_directory(root: Path) -> None:
             reject_links(shared)
             if not shared.is_dir():
                 raise
+
+
+def _install_system_fonts(shared: Path) -> None:
+    """既有字型目錄也補上 Windows 繁體字型（已存在就略過）。"""
+    for path in system_zh_hant_fonts():
+        target = shared / path.name
+        if target.exists():
+            continue
+        try:
+            shutil.copyfile(path, target)
+        except OSError:
+            continue
 
 
 def scan_font_files(root: Path, owner: str) -> list[tuple[str, str | None]]:

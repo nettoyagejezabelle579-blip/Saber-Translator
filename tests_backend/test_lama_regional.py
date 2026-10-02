@@ -11,6 +11,8 @@ from src.interfaces import lama_interface, lama_mpe_interface
 @pytest.mark.parametrize('model', ['lama_mpe', 'litelama', 'lama_manga'])
 @pytest.mark.parametrize('disable_resize', [False, True])
 def test_regions_preserve_small_targets_and_use_unchanged_context(monkeypatch, model, disable_resize):
+    # 純色背景會走快速填充；這裡要測的是模型路徑
+    monkeypatch.setattr('src.shared.constants.LAMA_FLAT_FILL_MAX_STD', 0)
     source = np.full((600, 900, 3), 41, np.uint8)
     mask = np.full((600, 900), 255, np.uint8)
     mask[250:270, 300:320] = 0

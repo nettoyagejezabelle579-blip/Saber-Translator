@@ -1,0 +1,133 @@
+# 日漫→繁體中文 CPU 免安裝版：Windows 打包並發布到 Release（單一 zip，解壓即用）
+name: Portable zh-Hant CPU build
+
+on:
+  push:
+    branches:
+      - claude/saber-translation-upgrade-ut9pti
+    paths-ignore:
+      - '**.md'
+      - 'tests_backend/**'
+      - 'vue-frontend/tests/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-zh-hant
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.12'
+  PIP_NO_CACHE_DIR: '1'
+  UPSTREAM_REPO: MashiroSaber03/Saber-Translator
+  MODELS_RELEASE_TAG: models-storage
+  RELEASE_TAG: galaxy-zh-hant-cpu
+  PACKAGE_NAME: Saber-Translator-zhHant-CPU
+  # GitHub Release 單一檔案上限 2 GiB
+  MAX_ASSET_BYTES: '2147000000'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Free disk space
+        run: |
+          $androidSdk = 'C:\Android\android-sdk'
+          if (Test-Path -LiteralPath $androidSdk) { Remove-Item -LiteralPath $androidSdk -Recurse -Force }
+          $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE).Substring(0, 1))
+          Write-Host ("Available disk: {0:N1} GiB" -f ($drive.Free / 1GB))
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download offline models (upstream models-storage release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          gh release download $env:MODELS_RELEASE_TAG --repo $env:UPSTREAM_REPO --pattern "models.z*" --dir .
+          7z x models.zip -y | Out-Null
+          Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Filter 'models.z*' -File | Remove-Item -Force
+          python .github/scripts/check_models.py models
+
+      - name: Add LaMA Manga model (default inpainting)
+        run: |
+          New-Item -ItemType Directory -Force -Path models\lama-manga | Out-Null
+          Invoke-WebRequest -Uri 'https://huggingface.co/mayocream/lama-manga/resolve/main/lama-manga.safetensors' -OutFile models\lama-manga\lama-manga.safetensors
+          $size = (Get-Item models\lama-manga\lama-manga.safetensors).Length
+          if ($size -lt 50MB) { throw "lama-manga download looks wrong: $size bytes" }
+
+      - name: Drop optional models not used by the default settings
+        run: |
+          Write-Host "Model sizes before pruning:"
+          Get-ChildItem models -Directory | ForEach-Object {
+            $mb = (Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+            Write-Host ("  {0,-24} {1,8:N0} MB" -f $_.Name, $mb)
+          }
+          foreach ($path in @('models\paddleocr_vl_1_6', 'models\ctd', 'models\yolo', 'models\lama\big-lama.safetensors')) {
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force; Write-Host "Removed $path" }
+          }
+
+      - name: Install dependencies
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install --upgrade pip
+          python -m pip install "torch==2.11.0+cpu" "torchvision==0.26.0+cpu" --index-url "https://download.pytorch.org/whl/cpu"
+          python -m pip install -r requirements-cpu.txt
+
+      - name: Build with PyInstaller
+        env:
+          SABER_BUILD_MOVE_MODELS: '1'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          pyinstaller app.spec --noconfirm
+
+      - name: Probe packaged app
+        run: python .github/scripts/probe_package.py dist/Saber-Translator/Saber-Translator.exe
+
+      - name: Add guide and first-run notes
+        run: |
+          Copy-Item GALAXY_BOOK_ZH_HANT_GUIDE.md dist\Saber-Translator\
+          Copy-Item packaging\README_FIRST.txt dist\Saber-Translator\
+          $longest = Get-ChildItem dist\Saber-Translator -Recurse -File |
+            ForEach-Object { $_.FullName.Substring((Resolve-Path dist).Path.Length + 1).Length } |
+            Measure-Object -Maximum
+          Write-Host "Longest path inside the package: $($longest.Maximum) characters"
+
+      - name: Create zip
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Push-Location dist
+          7z a -tzip -mx=7 -mmt=on "..\$env:PACKAGE_NAME.zip" Saber-Translator | Out-Null
+          Pop-Location
+          7z t "$env:PACKAGE_NAME.zip" | Select-Object -Last 3
+          $size = (Get-Item "$env:PACKAGE_NAME.zip").Length
+          Write-Host ("Package size: {0:N0} MB" -f ($size / 1MB))
+          if ($size -gt [int64]$env:MAX_ASSET_BYTES) { throw "Package exceeds the 2 GiB release asset limit" }
+          (Get-FileHash "$env:PACKAGE_NAME.zip" -Algorithm SHA256).Hash | Set-Content "$env:PACKAGE_NAME.zip.sha256"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          gh release delete $env:RELEASE_TAG --yes --cleanup-tag 2>$null
+          $PSNativeCommandUseErrorActionPreference = $true
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          $notes = @"
+          日漫→繁體中文（台灣／香港）CPU 免安裝版，建置自 $sha。
+
+          1. 下載 $env:PACKAGE_NAME.zip，解壓到 C:\ST 之類的資料夾（不要放 Program Files）。
+          2. 雙擊 Saber-Translator.exe（出現 SmartScreen 時按「其他資訊」→「仍要執行」）。
+          3. 在「設定 → 翻译服务」貼上 DeepSeek API Key。
+
+          詳見壓縮檔內的 README_FIRST.txt。
+          "@
+          $notes | Set-Content -Encoding utf8 notes.md
+          gh release create $env:RELEASE_TAG "$env:PACKAGE_NAME.zip" "$env:PACKAGE_NAME.zip.sha256" --target $env:GITHUB_SHA --title "繁中免安裝版 (CPU) $sha" --notes-file notes.md --prerelease

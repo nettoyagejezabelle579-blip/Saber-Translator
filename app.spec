@@ -37,6 +37,7 @@ datas.append((os.path.join(PROJECT_ROOT, 'src', 'shared', 'text_style_defaults_f
 datas.append((os.path.join(PROJECT_ROOT, 'src', 'shared', 'prompt_defaults_factory.json'), os.path.join('src', 'shared')))
 datas.append((os.path.join(PROJECT_ROOT, 'src', 'shared', 'ai_provider_manifest.json'), os.path.join('src', 'shared')))
 datas.append((os.path.join(PROJECT_ROOT, 'src', 'backend_v2', 'plugins', 'plugin_builder_skill.md'), os.path.join('src', 'backend_v2', 'plugins')))
+datas.append((os.path.join(PROJECT_ROOT, 'src', 'third_party', 'opencc'), os.path.join('src', 'third_party', 'opencc')))
 datas.append((os.path.join(PROJECT_ROOT, 'openapi', 'v2.yaml'), 'openapi'))
 
 # 2. 用户设置、提示词和凭据只存在于 v2 data root 的数据库中，

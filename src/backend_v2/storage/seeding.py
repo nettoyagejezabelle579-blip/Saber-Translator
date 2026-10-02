@@ -193,8 +193,10 @@ def seed_user_records_in_connection(connection: object, user_id: str) -> None:
 
 def _seed_shared_records(connection: object) -> None:
     existing = set(connection.execute(select(fonts.c.id)).scalars())
+    existing_paths = set(connection.execute(select(fonts.c.relative_path)).scalars())
     for font in bundled_font_files():
-        if font.id not in existing:
+        # 路徑唯一：既有安裝新增系統字型時，預設字型 ID 不會改指向別的檔案
+        if font.id not in existing and font.relative_path not in existing_paths:
             connection.execute(insert(fonts).values(
                 id=font.id, owner_user_id=None, relative_path=font.relative_path,
                 display_name=font.display_name,

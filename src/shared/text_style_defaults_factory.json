@@ -6,7 +6,7 @@
   "textColor": "#000000",
   "fillColor": "#FFFFFF",
   "inpaintMethod": "lama_manga",
-  "useAutoTextColor": false,
+  "useAutoTextColor": true,
   "strokeEnabled": true,
   "strokeColor": "#FFFFFF",
   "strokeWidth": 3,

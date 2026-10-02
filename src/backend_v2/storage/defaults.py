@@ -24,7 +24,7 @@ DEFAULT_TEXT_STYLE: dict[str, object] = {
     "textColor": "#000000",
     "fillColor": "#FFFFFF",
     "inpaintMethod": "lama_manga",
-    "useAutoTextColor": False,
+    "useAutoTextColor": True,  # 量測原圖文字像素，顏色與原文一致
     "strokeEnabled": True,
     "strokeColor": "#FFFFFF",
     "strokeWidth": 3,
@@ -211,8 +211,9 @@ def default_translation_settings() -> dict[str, object]:
             "confidenceThreshold": 0.2,
         },
         "translation": {
-            "provider": "siliconflow",
-            "modelName": "",
+            # DeepSeek：日譯中品質好、便宜、速度快，對成人虛構內容的翻譯限制較少
+            "provider": "deepseek",
+            "modelName": "deepseek-chat",
             "customBaseUrl": "",
             "openaiOptions": openai_options(
                 use_stream=True,
@@ -267,7 +268,8 @@ def default_translation_settings() -> dict[str, object]:
         },
         "preciseMask": {"dilateSize": 10, "boxExpandRatio": 20.0},
         "showDetectionDebug": False,
-        "parallel": {"enabled": False, "deepLearningLockSize": 1},
+        # 頁面流水線：本機偵測/OCR 與線上翻譯重疊進行；深度學習同時只跑 1 個，不加重 CPU
+        "parallel": {"enabled": True, "deepLearningLockSize": 1},
         "removeTextWithOcr": False,
         "compressVisionImages": True,
         "lamaDisableResize": False,

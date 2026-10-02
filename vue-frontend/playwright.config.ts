@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/visual',
+  // Short paths: the default '<spec>-snapshots/<name>-<project>-<platform>'
+  // layout exceeds Windows' 260-character limit once the repo is unzipped.
+  snapshotPathTemplate: '{testDir}/snaps/{arg}{-platform}{ext}',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

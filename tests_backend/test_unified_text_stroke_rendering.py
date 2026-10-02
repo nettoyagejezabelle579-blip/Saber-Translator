@@ -9,6 +9,12 @@ from src.core.rendering import _draw_bubble_text_pass, get_font, render_bubbles_
 from src.shared import constants
 
 
+@pytest.fixture(autouse=True)
+def _keep_reference_text_unconverted(monkeypatch):
+    # 這些用例逐像素比對參照繪製與實際渲染；渲染時的簡轉繁會讓兩邊文字不同。
+    monkeypatch.setenv("SABER_ZH_HANT_REGION", "off")
+
+
 @pytest.mark.parametrize(
     ("text_direction", "text", "rotation_angle"),
     [
