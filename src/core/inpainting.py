@@ -104,6 +104,57 @@ def _bubble_region_mask(shape, coords, polygon):
     return region.astype(bool)
 
 
+def _despeckle_flat_regions(result_img, repaired_mask):
+    """去字後殘留的小點清除。
+
+    只處理周圍是純色的區域（白色或淺色氣泡）：在修復區及外圍一圈內，
+    與底色差異明顯的小連通塊（灰點、彩色點、白點）直接填成底色。
+    畫面、網點等有紋理的區域不動。回傳新圖；沒有需要清理的地方時回傳 None。
+    """
+    if not repaired_mask.any():
+        return None
+    result = np.array(result_img.convert("RGB"))
+    height, width = repaired_mask.shape
+    band = max(4, round(max(height, width) / 300))
+    near = cv2.dilate(
+        repaired_mask.astype(np.uint8),
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * band + 1, 2 * band + 1)),
+    ) > 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(near.astype(np.uint8), 8)
+    changed = False
+    for label in range(1, count):
+        x, y, w, h, _area = stats[label]
+        region = labels[y:y + h, x:x + w] == label
+        crop = result[y:y + h, x:x + w]
+        pixels = crop[region].astype(np.int16)
+        if len(pixels) < 50:
+            continue
+        background = np.median(pixels, axis=0)
+        distance = np.abs(pixels - background).max(axis=1)
+        # 至少 90% 像素接近底色才算純色區域
+        if float((distance <= 24).mean()) < 0.9:
+            continue
+        outlier = np.zeros(region.shape, np.uint8)
+        outlier[region] = (distance > 24).astype(np.uint8)
+        dots, dot_labels, dot_stats, _ = cv2.connectedComponentsWithStats(outlier, 8)
+        max_dot = max(40, int(0.002 * region.sum()))
+        # 碰到範圍邊緣的色塊（例如延伸進來的氣泡外框）不是殘點
+        padded = np.pad(region.astype(np.uint8), 1)
+        edge = region & (cv2.erode(padded, np.ones((3, 3), np.uint8))[1:-1, 1:-1] == 0)
+        edge_dots = set(np.unique(dot_labels[edge]).tolist())
+        speck = np.zeros(region.shape, bool)
+        for dot in range(1, dots):
+            # 大塊（氣泡外框、刻意保留的圖案）不動，只清小點
+            if dot not in edge_dots and dot_stats[dot, cv2.CC_STAT_AREA] <= max_dot:
+                speck |= dot_labels == dot
+        if speck.any():
+            speck = cv2.dilate(speck.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            speck &= region
+            crop[speck] = background.astype(np.uint8)
+            changed = True
+    return Image.fromarray(result) if changed else None
+
+
 def _pick_fill_color(samples, configured):
     """在采样底色和用户填充色之间选择。"""
     if samples.shape[0] < _MIN_BG_SAMPLES:
@@ -317,6 +368,12 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
         bubble_mask_np = np.maximum(text_mask, box_region_mask)
         
         # 掩膜膨胀处理（问题2：膨胀系数）
+        if mask_dilate_size > 0 and getattr(constants, "ADAPTIVE_MASK_DILATE", False):
+            # 膨胀像素數隨頁面尺寸放大：高解析度頁面的抗鋸齒邊、描邊也能完整蓋住
+            mask_dilate_size = max(
+                mask_dilate_size,
+                round(mask_dilate_size * max(image_size[:2]) / 1500),
+            )
         if mask_dilate_size > 0:
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (mask_dilate_size * 2 + 1, mask_dilate_size * 2 + 1))
             # 膨胀需要修复的区域（黑色区域），所以先反转，膨胀，再反转
@@ -392,6 +449,11 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
                 raise RuntimeError("LaMA 修复未返回图像")
             if result_img.size != image_pil.size:
                 raise RuntimeError("LaMA 修复结果尺寸与输入图像不一致")
+            if getattr(constants, "REPAIR_DESPECKLE", False):
+                cleaned = _despeckle_flat_regions(result_img, bubble_mask_np < 128)
+                if cleaned is not None:
+                    result_img.close()
+                    result_img = cleaned
             logger.debug("LAMA 修复成功")
         else:
             result_img = image_pil.copy()

@@ -30,7 +30,7 @@ class DesktopSettings:
         repr=False,
     )
     resident_models: tuple[str, ...] = ()
-    pet_enabled: bool = True
+    pet_enabled: bool = False  # 桌面寵物預設關閉，筆電少佔 CPU／記憶體
     pet_always_on_top: bool = True
     pet_scale_percent: int = 75
     pet_screen_name: str = ""

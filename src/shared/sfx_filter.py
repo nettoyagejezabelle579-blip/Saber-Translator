@@ -13,7 +13,7 @@
 4. 不是「はい」「いい」「いいえ」「おい」「ううん」等有實際意思的詞。
 只剩標點（例如「……」「！？」）的氣泡也會跳過。
 
-環境變數 SABER_KEEP_STANDALONE_SFX=0 可關閉此功能。
+預設關閉（全部照常翻譯）；設定環境變數 SABER_KEEP_STANDALONE_SFX=1 才會啟用。
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ import os
 import re
 
 ENV_SWITCH = "SABER_KEEP_STANDALONE_SFX"
-MAX_KANA = 6
+# 呻吟會一直重複（はぁはぁはぁはぁ、あっあっあっあっ），長度上限放寬
+MAX_KANA = 16
 
 _STRIP_RE = re.compile(
     r"[\s　ー〜～~・･…‥。、，,．.！？!?♡♥❤❣☆★♪・「」『』（）()【】\-—―゛゜\"'“”‘’]+"
@@ -37,6 +38,10 @@ _MEANINGFUL = {
 _VOICED = set("がぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽゔ")
 _SMALL_Y = set("ゃゅょ")
 _REPEAT_DENY = {"もっと", "だめ", "いや", "まだ", "はやく", "ほら", "そう", "ねえ", "ほんと"}
+# 短促擬音（びくっ、どきっ、ずぷっ、びくんっ）中間可出現的假名
+_BURST_MIDDLE = set("くきつちたとぷぽぴぶぼびんる")
+# 看起來像短促擬音、其實是台詞的詞（だめっ、ばかっ…）
+_BURST_DENY = {"だめ", "ばか", "やだ", "ずる", "でき", "どこ", "だれ", "ぜんぶ", "ばれ"}
 MAX_SFX_KANA = 8
 
 
@@ -47,8 +52,9 @@ def _to_hiragana(text: str) -> str:
 
 
 def is_enabled(environ=os.environ) -> bool:
-    return str(environ.get(ENV_SWITCH, "1")).strip().lower() not in {
-        "0", "off", "false", "no",
+    # 預設關閉：語氣詞、擬音也照常翻譯
+    return str(environ.get(ENV_SWITCH, "0")).strip().lower() in {
+        "1", "on", "true", "yes",
     }
 
 
@@ -83,13 +89,20 @@ def _is_onomatopoeia(core: str) -> bool:
     # 濁音／半濁音 + 拗音：ぴゅ、どぴゅ、びゅる、ぐちゅ、じゅぽ、ぎゅっ
     if voiced and small_y and len(core) <= 6:
         return True
-    # 疊字：ドキドキ、ぱんぱん、くちゅくちゅ、ずぶずぶ
-    half = len(core) // 2
-    if len(core) % 2 == 0 and 1 <= half <= 4 and core[:half] == core[half:]:
-        part = core[:half]
+    # 疊字：ドキドキ、ぱんぱん(っ)、くちゅくちゅ、ずぶずぶ
+    base = core.rstrip("っ")
+    half = len(base) // 2
+    if len(base) % 2 == 0 and 1 <= half <= 4 and base[:half] == base[half:]:
+        part = base[:half]
         if part not in _REPEAT_DENY and (
             any(c in _VOICED or c in _SMALL_Y or c in "っんー" for c in part)
         ):
             return True
-    # 短促擬音：ビクッ、ドキッ、ギクッ
-    return len(core) <= 3 and core.endswith("っ") and voiced
+    # 短促擬音：ビクッ、ドキッ、ズプッ、ビクンッ、ドクンッ
+    return (
+        3 <= len(core) <= 4
+        and core.endswith("っ")
+        and core[0] in _VOICED
+        and all(c in _BURST_MIDDLE for c in core[1:-1])
+        and base not in _BURST_DENY
+    )

@@ -14,6 +14,7 @@ import uuid
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from src.backend_v2.content.repository import ContentRepository
+from src.shared import constants
 from src.backend_v2.storage.assets import AssetStorageService
 
 
@@ -303,7 +304,42 @@ class ImageImportService:
                 bind=bind,
             )
 
+    @staticmethod
+    def _upscale_small_page(path: Path) -> None:
+        """長邊小於 IMPORT_UPSCALE_BELOW 的頁面先放大再處理，譯文字更銳利。
+
+        偵測、去字、嵌字都在放大後的圖上進行；原檔被改寫為無損 PNG。
+        太小的圖（圖示、測試圖）與已經夠大的圖不動。
+        """
+        threshold = int(getattr(constants, "IMPORT_UPSCALE_BELOW", 0) or 0)
+        factor = int(getattr(constants, "IMPORT_UPSCALE_FACTOR", 1) or 1)
+        if threshold <= 0 or factor <= 1:
+            return
+        try:
+            with Image.open(path) as decoded:
+                if (decoded.format or "").upper() not in FORMAT_DETAILS:
+                    return
+                oriented = ImageOps.exif_transpose(decoded)
+                try:
+                    width, height = oriented.size
+                    if not 400 <= max(width, height) < threshold:
+                        return
+                    mode = "RGBA" if "A" in oriented.getbands() else "RGB"
+                    with oriented.convert(mode) as converted:
+                        enlarged = converted.resize(
+                            (width * factor, height * factor),
+                            Image.Resampling.LANCZOS,
+                        )
+                finally:
+                    if oriented is not decoded:
+                        oriented.close()
+        except (UnidentifiedImageError, OSError):
+            return  # 交給後續解碼回報錯誤
+        with enlarged:
+            enlarged.save(path, format="PNG", compress_level=3)
+
     def _publish_temporary(self, temporary: Path):
+        self._upscale_small_page(temporary)
         (
             extension,
             mime_type,
