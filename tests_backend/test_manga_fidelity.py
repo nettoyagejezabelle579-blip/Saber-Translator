@@ -22,6 +22,22 @@ def test_real_speech_is_translated(text):
     assert not is_standalone_sfx(text, {})
 
 
+@pytest.mark.parametrize("text", [
+    "ぴゅっ♡", "どぴゅ♡", "ドピュッ", "びゅるる", "ぐちゅ", "ドキドキ", "ぱんぱん",
+    "くちゅくちゅ", "ビクッ", "ギクッ", "ずぶずぶ", "ぎゅっ",
+])
+def test_standalone_onomatopoeia_is_kept(text):
+    assert is_standalone_sfx(text, {})
+
+
+@pytest.mark.parametrize("text", [
+    "いやいや", "もっともっと", "ちょっと", "パンツ", "ごめん", "じょうず", "だって",
+    "すごい", "ばか",
+])
+def test_short_words_that_look_like_sfx_are_translated(text):
+    assert not is_standalone_sfx(text, {})
+
+
 def test_sfx_switch_can_be_disabled():
     assert not is_standalone_sfx("あ", {"SABER_KEEP_STANDALONE_SFX": "0"})
 
