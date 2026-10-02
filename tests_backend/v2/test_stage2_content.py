@@ -725,7 +725,10 @@ def test_chapter_settings_memory_has_no_aggregate_byte_gate(content_platform) ->
     assert updated["payload"] == payload
 def test_page_import_publishes_source_and_webp_thumbnail_without_base64(
     content_platform,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # 這裡驗證匯入流程本身；小圖放大另有測試
+    monkeypatch.setattr("src.shared.constants.IMPORT_UPSCALE_BELOW", 0)
     data_root, engine, repository, storage, importer, _book, chapter = content_platform
     result, replayed = _import(
         repository,
@@ -1676,8 +1679,9 @@ def test_page_document_allows_propagating_current_style_without_a_style_patch(
     )
 
     payload = result["document"]["bubbles"][0]["payload"]
-    assert payload["inlineAlign"] == "start"
-    assert payload["blockAlign"] == "start"
+    # 預設對齊改為置中
+    assert payload["inlineAlign"] == "center"
+    assert payload["blockAlign"] == "center"
 
 
 def test_page_document_rejects_malformed_bubble_payload(

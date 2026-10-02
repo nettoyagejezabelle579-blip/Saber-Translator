@@ -134,7 +134,9 @@ def _create_session(client):
 
 
 @pytest.mark.parametrize("destination", ["new", "existing"])
-def test_selected_originals_download_and_import_without_translation(browser_platform, destination):
+def test_selected_originals_download_and_import_without_translation(browser_platform, destination, monkeypatch):
+    # 原圖逐位元組比對；小圖放大另有測試
+    monkeypatch.setattr("src.shared.constants.IMPORT_UPSCALE_BELOW", 0)
     _data_root, engine, app = browser_platform
     client = app.test_client()
     session = _create_session(client).get_json()

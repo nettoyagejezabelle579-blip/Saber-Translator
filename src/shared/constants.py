@@ -193,6 +193,21 @@ LAMA_FLAT_FILL_MAX_STD = 6.0
 # 自動文字顏色：直接量測原圖文字像素（比 48px 模型推測更準、也不需要再跑模型）
 PIXEL_TEXT_COLOR = True
 
+# 譯文以 N 倍解析度繪製後縮回（超取樣）。FreeType 本身已有抗鋸齒，
+# 縮回時還會重新取樣文字周圍的背景，反而偏糊，因此預設關閉（1）。
+# 字更清晰改由 IMPORT_UPSCALE_* 在匯入時放大小圖達成。
+TEXT_SUPERSAMPLE = 1
+
+# 匯入時放大小圖：長邊小於此像素的頁面先放大 2 倍再處理，
+# 偵測、去字、嵌字都在高解析度進行，譯文字更銳利。0 = 關閉。
+IMPORT_UPSCALE_BELOW = 1600
+IMPORT_UPSCALE_FACTOR = 2
+
+# 去字遮罩膨胀隨頁面尺寸放大（以 1500px 長邊為基準）
+ADAPTIVE_MASK_DILATE = True
+# 去字後清除純色氣泡內殘留的小點（灰點、彩點、白點）
+REPAIR_DESPECKLE = True
+
 # 自動字號不超過原文字號（由文字行寬度估算），讓譯文大小和原圖一致
 MATCH_SOURCE_FONT_SIZE = True
 

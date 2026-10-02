@@ -544,14 +544,14 @@ def test_non_translate_restore_accepts_model_returned_fragment() -> None:
     ) == "ガラッ"
 
 
-def test_non_translate_restore_still_rejects_missing_token_and_fragment() -> None:
+def test_non_translate_restore_keeps_translation_when_token_is_dropped() -> None:
     token = "⟦SABER_NT_page_0_deadbeef00⟧"
 
-    with pytest.raises(JobConflict, match="lost protected non-translate token"):
-        _restore_non_translate_text(
-            "开门声",
-            {token: "ガラッ"},
-        )
+    # 漏掉占位符只記警告，不讓整頁失敗
+    assert _restore_non_translate_text(
+        "开门声",
+        {token: "ガラッ"},
+    ) == "开门声"
 
 
 def test_new_translation_bubble_keeps_font_as_relational_fact() -> None:

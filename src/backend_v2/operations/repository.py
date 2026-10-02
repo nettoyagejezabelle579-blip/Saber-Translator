@@ -14,6 +14,7 @@ import uuid
 from sqlalchemy import Engine, exists, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
+from src.backend_v2.content.page_locks import page_reserved_by_job
 from src.backend_v2.auth.ownership import effective_owner_id
 from sqlalchemy.engine import Connection
 
@@ -204,7 +205,7 @@ class OperationRepository:
             if page is None:
                 raise OperationNotFound("page not found")
             self._assert_new_page_write_allowed(
-                connection, str(page["chapter_id"])
+                connection, str(page["chapter_id"]), page_id
             )
             if int(page["document_revision"]) != base_revision:
                 raise OperationConflict("page document revision changed")
@@ -364,7 +365,7 @@ class OperationRepository:
             if page is None:
                 raise OperationNotFound("page not found")
             self._assert_new_page_write_allowed(
-                connection, str(page["chapter_id"])
+                connection, str(page["chapter_id"]), page_id
             )
             if int(page["document_revision"]) != base_revision:
                 raise OperationConflict("page document revision changed")
@@ -951,7 +952,13 @@ class OperationRepository:
     def _assert_new_page_write_allowed(
         connection: Connection,
         chapter_id: str,
+        page_id: str | None = None,
     ) -> None:
+        if page_id is not None:
+            # 翻譯進行中，任務已處理完的頁面仍可修復／重繪
+            if page_reserved_by_job(connection, chapter_id, page_id):
+                raise OperationLocked("chapter_locked")
+            return
         lock = connection.execute(
             select(chapter_write_locks.c.chapter_id).where(
                 chapter_write_locks.c.chapter_id == chapter_id
@@ -1169,7 +1176,7 @@ class RenderRequestRepository:
             raise OperationConflict("render revision is not the current document")
         if not existing_chain:
             OperationRepository._assert_new_page_write_allowed(
-                connection, str(page["chapter_id"])
+                connection, str(page["chapter_id"]), page_id
             )
         existing = connection.execute(
             select(

@@ -11,19 +11,42 @@ from PIL import Image
 
 from src.shared.sfx_filter import is_standalone_sfx
 
+_ON = {"SABER_KEEP_STANDALONE_SFX": "1"}
+
 
 @pytest.mark.parametrize("text", ["あ", "うん", "あっ…", "はぁはぁ", "んっ♡", "えっ！？", "……", "アァン♡", "ふう"])
 def test_standalone_interjections_are_kept(text):
-    assert is_standalone_sfx(text, {})
+    assert is_standalone_sfx(text, _ON)
 
 
 @pytest.mark.parametrize("text", ["はい", "いい", "ダメ", "やめて", "あ、あの…", "ふふ", "いや", "うそ", "気持ちいい", ""])
 def test_real_speech_is_translated(text):
-    assert not is_standalone_sfx(text, {})
+    assert not is_standalone_sfx(text, _ON)
+
+
+@pytest.mark.parametrize("text", [
+    "ぴゅっ♡", "どぴゅ♡", "ドピュッ", "びゅるる", "ぐちゅ", "ドキドキ", "ぱんぱん",
+    "くちゅくちゅ", "ビクッ", "ギクッ", "ずぶずぶ", "ぎゅっ",
+])
+def test_standalone_onomatopoeia_is_kept(text):
+    assert is_standalone_sfx(text, _ON)
+
+
+@pytest.mark.parametrize("text", [
+    "いやいや", "もっともっと", "ちょっと", "パンツ", "ごめん", "じょうず", "だって",
+    "すごい", "ばか",
+])
+def test_short_words_that_look_like_sfx_are_translated(text):
+    assert not is_standalone_sfx(text, _ON)
 
 
 def test_sfx_switch_can_be_disabled():
     assert not is_standalone_sfx("あ", {"SABER_KEEP_STANDALONE_SFX": "0"})
+
+
+def test_sfx_rule_is_off_by_default():
+    assert not is_standalone_sfx("あ", {})
+    assert not is_standalone_sfx("ドキドキ", {})
 
 
 def _vertical_line(x1, y1, x2, y2):
@@ -169,3 +192,35 @@ def test_without_windows_fonts_default_is_unchanged(monkeypatch):
     monkeypatch.delenv("SystemRoot", raising=False)
     default = next(font for font in font_files.bundled_font_files() if font.id == DEFAULT_FONT_ID)
     assert "SourceHanSansK" in default.path.name
+
+
+def test_supersampled_text_keeps_size_and_background(monkeypatch):
+    from src.core import rendering
+    from src.core.config_models import BubbleState
+    from src.shared import constants
+
+    state = BubbleState(
+        translated_text="好舒服♡", coords=(20, 20, 140, 260), font_size=26,
+        font_family=constants.DEFAULT_FONT_RELATIVE_PATH, text_direction="vertical",
+        text_color="#000000", stroke_enabled=True, stroke_color="#FFFFFF", stroke_width=3,
+    )
+    monkeypatch.setattr(constants, "TEXT_SUPERSAMPLE", 2)
+    image = Image.new("RGB", (160, 280), (235, 200, 180))
+    rendering.render_bubbles_unified(image, [state])
+    pixels = np.asarray(image)
+    assert image.size == (160, 280)
+    assert (pixels[:10, :10] == (235, 200, 180)).all()  # 背景不被縮放影響
+    assert (pixels.sum(axis=2) < 100).sum() > 200  # 有黑色文字
+
+
+def test_supersampling_skips_huge_pages(monkeypatch):
+    from src.core import rendering
+    from src.shared import constants
+
+    calls = []
+    monkeypatch.setattr(constants, "TEXT_SUPERSAMPLE", 2)
+    monkeypatch.setattr(rendering, "_SUPERSAMPLE_MAX_PIXELS", 100)
+    monkeypatch.setattr(rendering, "_render_bubbles_direct", lambda image, states: calls.append(image.size) or image)
+    image = Image.new("RGB", (50, 50))
+    rendering.render_bubbles_unified(image, [object()])
+    assert calls == [(50, 50)]

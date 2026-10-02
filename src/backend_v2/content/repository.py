@@ -20,6 +20,7 @@ from src.backend_v2.content.translation_constraints import (
     empty_translation_constraints,
     validate_translation_constraints,
 )
+from src.backend_v2.content.page_locks import page_reserved_by_job
 from src.backend_v2.content.page_style import (
     rgb_to_hex,
     validate_page_style,
@@ -2032,7 +2033,9 @@ class ContentRepository:
                 raise ContentNotFound("page not found")
             if page["document_revision"] != base_revision:
                 raise ContentConflict("page document revision changed")
-            self._assert_chapter_writable(connection, str(page["chapter_id"]))
+            # 翻譯進行中也能編輯已完成的頁面；只有任務還要處理的頁面才鎖定
+            if page_reserved_by_job(connection, str(page["chapter_id"]), page_id):
+                raise ContentLocked("page is still being processed by backend work")
             if connection.execute(
                 select(operations.c.id).where(
                     operations.c.page_id == page_id,

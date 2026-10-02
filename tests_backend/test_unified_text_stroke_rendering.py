@@ -13,6 +13,8 @@ from src.shared import constants
 def _keep_reference_text_unconverted(monkeypatch):
     # 這些用例逐像素比對參照繪製與實際渲染；渲染時的簡轉繁會讓兩邊文字不同。
     monkeypatch.setenv("SABER_ZH_HANT_REGION", "off")
+    # 逐像素比對要求原尺寸直接繪製；超取樣另有測試
+    monkeypatch.setattr(constants, "TEXT_SUPERSAMPLE", 1)
 
 
 @pytest.mark.parametrize(

@@ -465,9 +465,14 @@ def _restore_non_translate_text(
             # reject an otherwise valid translation.
             if fragment in restored:
                 continue
-            raise JobConflict(
-                f"translation response lost protected non-translate token {token}"
+            # 模型偶爾會漏掉占位符（尤其是快速模型）。為了一個禁翻詞讓整頁失敗不划算：
+            # 保留譯文並記錄警告，使用者可在編輯模式手動補上。
+            user_log(
+                "warning",
+                f"譯文漏掉了禁翻內容「{fragment}」，已保留其餘譯文",
+                details=[token],
             )
+            continue
         restored = restored.replace(token, fragment)
     return restored
 

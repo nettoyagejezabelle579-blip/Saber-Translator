@@ -1875,7 +1875,70 @@ def _rotate_bubble_layer(layer, origin, center, angle):
                            matrix, resample=Image.Resampling.BICUBIC), (left, top)
 
 
+# 超取樣上限：放大後超過此像素數就直接以原尺寸繪製，避免大圖吃光記憶體
+_SUPERSAMPLE_MAX_PIXELS = 48_000_000
+
+
+def _scale_bubble_state(state: "BubbleState", factor: int) -> "BubbleState":
+    from dataclasses import replace
+
+    offset = state.position_offset or {"x": 0, "y": 0}
+    return replace(
+        state,
+        coords=tuple(int(round(v * factor)) for v in state.coords),
+        polygon=[[int(round(x * factor)), int(round(y * factor))] for x, y in state.polygon],
+        font_size=int(round(state.font_size * factor)),
+        stroke_width=state.stroke_width * factor,
+        position_offset={"x": offset.get("x", 0) * factor, "y": offset.get("y", 0) * factor},
+    )
+
+
 def render_bubbles_unified(
+    image: Image.Image,
+    bubble_states: List["BubbleState"]
+) -> Image.Image:
+    """以 TEXT_SUPERSAMPLE 倍解析度繪製譯文再縮回原尺寸，只貼回文字像素。
+
+    字體邊緣與描邊的抗鋸齒更平滑，背景圖完全不受影響（不會因縮放變糊）。
+    """
+    factor = int(getattr(constants, "TEXT_SUPERSAMPLE", 1) or 1)
+    width, height = image.size
+    if (
+        factor <= 1
+        or not bubble_states
+        or width * height * factor * factor > _SUPERSAMPLE_MAX_PIXELS
+    ):
+        return _render_bubbles_direct(image, bubble_states)
+
+    from PIL import ImageChops, ImageFilter
+
+    big = image.resize((width * factor, height * factor), Image.Resampling.LANCZOS)
+    try:
+        untouched = big.copy()
+        try:
+            _render_bubbles_direct(big, [_scale_bubble_state(s, factor) for s in bubble_states])
+            changed = ImageChops.difference(big, untouched)
+        finally:
+            untouched.close()
+        with changed:
+            gray = changed.convert("L")
+        with gray:
+            mask_big = gray.point(lambda v: 255 if v else 0)
+        if mask_big.getbbox() is None:
+            mask_big.close()
+            return image
+        with mask_big:
+            coverage = mask_big.resize((width, height), Image.Resampling.BOX)
+        with coverage:
+            mask = coverage.point(lambda v: 255 if v else 0).filter(ImageFilter.MaxFilter(3))
+        with mask, big.resize((width, height), Image.Resampling.LANCZOS) as small:
+            image.paste(small, (0, 0), mask)
+    finally:
+        big.close()
+    return image
+
+
+def _render_bubbles_direct(
     image: Image.Image,
     bubble_states: List["BubbleState"]
 ) -> Image.Image:
