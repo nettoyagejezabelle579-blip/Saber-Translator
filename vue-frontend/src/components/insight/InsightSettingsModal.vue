@@ -1,0 +1,373 @@
+<script setup lang="ts">
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import BaseModal from '@/components/common/BaseModal.vue'
+import UiButton from '@/components/ui/UiButton.vue'
+import ProductActionRow from '@/components/product/ProductActionRow.vue'
+import ProductSegmentedTabs from '@/components/product/ProductSegmentedTabs.vue'
+import ProductStatusBanner from '@/components/product/ProductStatusBanner.vue'
+import { useInsightStore, type InsightConfigStateSnapshot } from '@/stores/insightStore'
+import * as insightApi from '@/api/insight'
+import type {
+  BatchConfig,
+  StoreEmbeddingConfig,
+  StoreImageGenConfig,
+  StoreLlmConfig,
+  StoreRerankerConfig,
+  StoreVlmConfig,
+} from '@/types/insight'
+import { deepClone } from '@/utils/deepClone'
+
+import VlmSettingsTab from './settings/VlmSettingsTab.vue'
+import LlmSettingsTab from './settings/LlmSettingsTab.vue'
+import BatchSettingsTab from './settings/BatchSettingsTab.vue'
+import EmbeddingSettingsTab from './settings/EmbeddingSettingsTab.vue'
+import RerankerSettingsTab from './settings/RerankerSettingsTab.vue'
+import PromptsSettingsTab from './settings/PromptsSettingsTab.vue'
+import ImageGenSettingsTab from './settings/ImageGenSettingsTab.vue'
+
+const emit = defineEmits<{
+  (e: 'close'): void
+}>()
+
+const insightStore = useInsightStore()
+
+type InsightSettingsTabId =
+  | 'vlm'
+  | 'llm'
+  | 'batch'
+  | 'embedding'
+  | 'reranker'
+  | 'imagegen'
+  | 'prompts'
+
+const activeSettingsTab = ref<InsightSettingsTabId>('vlm')
+const visitedSettingsTabs = ref<Set<InsightSettingsTabId>>(new Set(['vlm']))
+const isSaving = ref(false)
+const isLoadingConfig = ref(true)
+const backendConfigReady = ref(false)
+const testMessage = ref('')
+const testMessageType = ref<'success' | 'error' | ''>('')
+const messageTone = computed(() => (testMessageType.value === 'error' ? 'danger' : 'success'))
+let messageTimer: ReturnType<typeof setTimeout> | null = null
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+let initialConfigState: InsightConfigStateSnapshot | null = null
+let requestSequence = 0
+let isMounted = true
+
+const syncRequestId = ref(0)
+
+const vlmDraft = ref<StoreVlmConfig>(deepClone(insightStore.config.vlm))
+const llmDraft = ref<StoreLlmConfig>(deepClone(insightStore.config.llm))
+const batchDraft = ref<BatchConfig>(deepClone(insightStore.config.batch))
+const embeddingDraft = ref<StoreEmbeddingConfig>(deepClone(insightStore.config.embedding))
+const rerankerDraft = ref<StoreRerankerConfig>(deepClone(insightStore.config.reranker))
+const promptsDraft = ref<Record<string, string>>(deepClone(insightStore.config.prompts))
+const imageGenDraft = ref<StoreImageGenConfig>(deepClone(insightStore.config.imageGen))
+
+const settingsTabs = [
+  { id: 'vlm', label: 'VLM 多模态', glyph: '🖼️' },
+  { id: 'llm', label: 'LLM 对话', glyph: '💬' },
+  { id: 'batch', label: '批量分析', glyph: '📊' },
+  { id: 'embedding', label: '向量模型', glyph: '🔢' },
+  { id: 'reranker', label: '重排序', glyph: '🔄' },
+  { id: 'imagegen', label: '生图模型', glyph: '🎨' },
+  { id: 'prompts', label: '提示词', glyph: '📝' },
+] satisfies Array<{ id: InsightSettingsTabId; label: string; glyph: string }>
+
+function settingsTabGlyph(tabId: string): string {
+  return settingsTabs.find(tab => tab.id === tabId)?.glyph ?? ''
+}
+
+function isInsightSettingsTabId(value: string): value is InsightSettingsTabId {
+  return settingsTabs.some(tab => tab.id === value)
+}
+
+function switchSettingsTab(tab: InsightSettingsTabId): void {
+  activeSettingsTab.value = tab
+  visitedSettingsTabs.value = new Set([...visitedSettingsTabs.value, tab])
+  testMessage.value = ''
+  testMessageType.value = ''
+}
+
+function updateSettingsTab(tabId: string): void {
+  if (isInsightSettingsTabId(tabId)) {
+    switchSettingsTab(tabId)
+  }
+}
+
+function close(): void {
+  if (isSaving.value) return
+  requestSequence += 1
+  clearMessageTimer()
+  clearCloseTimer()
+  if (initialConfigState) {
+    insightStore.restoreConfigState(initialConfigState)
+    initialConfigState = null
+  }
+  emit('close')
+}
+
+function hasVisitedSettingsTab(tab: InsightSettingsTabId): boolean {
+  return visitedSettingsTabs.value.has(tab)
+}
+
+function closeAfterCommit(): void {
+  if (!isMounted) return
+  requestSequence += 1
+  clearMessageTimer()
+  clearCloseTimer()
+  initialConfigState = null
+  emit('close')
+}
+
+function clearMessageTimer(): void {
+  if (messageTimer) {
+    clearTimeout(messageTimer)
+    messageTimer = null
+  }
+}
+
+function clearCloseTimer(): void {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+}
+
+function showMessage(message: string, type: 'success' | 'error'): void {
+  if (!isMounted) return
+  clearMessageTimer()
+  testMessage.value = message
+  testMessageType.value = type
+  messageTimer = setTimeout(() => {
+    testMessage.value = ''
+    testMessageType.value = ''
+    messageTimer = null
+  }, 3000)
+}
+
+function refreshDraftsFromStore(): void {
+  vlmDraft.value = deepClone(insightStore.config.vlm)
+  llmDraft.value = deepClone(insightStore.config.llm)
+  batchDraft.value = deepClone(insightStore.config.batch)
+  embeddingDraft.value = deepClone(insightStore.config.embedding)
+  rerankerDraft.value = deepClone(insightStore.config.reranker)
+  promptsDraft.value = deepClone(insightStore.config.prompts)
+  imageGenDraft.value = deepClone(insightStore.config.imageGen)
+}
+
+function applyDraftsToStore(): void {
+  insightStore.updateVlmConfig(vlmDraft.value)
+  insightStore.updateLlmConfig(llmDraft.value)
+  insightStore.updateBatchConfig(batchDraft.value)
+  insightStore.updateEmbeddingConfig(embeddingDraft.value)
+  insightStore.updateRerankerConfig(rerankerDraft.value)
+  insightStore.updatePrompts(promptsDraft.value)
+  insightStore.updateImageGenConfig(imageGenDraft.value)
+}
+
+async function saveSettings(): Promise<void> {
+  if (isSaving.value) return
+
+  const requestId = ++requestSequence
+  isSaving.value = true
+
+  try {
+    let apiConfig: ReturnType<typeof insightStore.getConfigForApi>
+    try {
+      applyDraftsToStore()
+      apiConfig = insightStore.getConfigForApi()
+    } finally {
+      if (initialConfigState) {
+        insightStore.restoreConfigState(initialConfigState)
+      }
+    }
+    const savedConfig = await insightApi.saveGlobalConfig(apiConfig)
+    if (!isMounted || requestId !== requestSequence) return
+    insightStore.setConfigFromApi(savedConfig)
+    requestTabsSyncFromStore()
+    backendConfigReady.value = true
+    initialConfigState = insightStore.snapshotConfigState()
+    showMessage('设置已保存', 'success')
+    clearCloseTimer()
+    closeTimer = setTimeout(() => {
+      closeTimer = null
+      closeAfterCommit()
+    }, 500)
+  } catch (error) {
+    if (isMounted && requestId === requestSequence) {
+      showMessage('保存失败: ' + (error instanceof Error ? error.message : '网络错误'), 'error')
+    }
+  } finally {
+    if (isMounted && requestId === requestSequence) isSaving.value = false
+  }
+}
+
+async function loadConfig(existingRequestId?: number): Promise<boolean> {
+  const requestId = existingRequestId ?? ++requestSequence
+  try {
+    const config = await insightApi.getGlobalConfig()
+    if (!isMounted || requestId !== requestSequence) return false
+    insightStore.setConfigFromApi(config)
+    requestTabsSyncFromStore()
+    return true
+  } catch (error) {
+    if (!isMounted || requestId !== requestSequence) return false
+    showMessage(error instanceof Error ? error.message : '加载后端配置失败', 'error')
+    requestTabsSyncFromStore()
+    return false
+  }
+}
+
+function requestTabsSyncFromStore(): void {
+  refreshDraftsFromStore()
+  syncRequestId.value += 1
+}
+
+onMounted(async () => {
+  backendConfigReady.value = await loadConfig()
+  if (!isMounted) return
+  if (backendConfigReady.value) {
+    initialConfigState = insightStore.snapshotConfigState()
+  }
+  isLoadingConfig.value = false
+})
+
+onBeforeUnmount(() => {
+  isMounted = false
+  requestSequence += 1
+  clearMessageTimer()
+  clearCloseTimer()
+  if (initialConfigState) {
+    insightStore.restoreConfigState(initialConfigState)
+    initialConfigState = null
+  }
+})
+</script>
+
+<template>
+  <BaseModal title="漫画分析设置" size="large" custom-class="insight-settings-modal" @close="close">
+    <ProductStatusBanner
+      v-if="testMessage"
+      class="insight-settings-message"
+      :tone="messageTone"
+      aria-live="polite"
+    >
+      {{ testMessage }}
+    </ProductStatusBanner>
+
+    <p v-if="isLoadingConfig" class="insight-settings-loading">正在读取后端配置…</p>
+    <fieldset v-else class="insight-settings-fields" :disabled="!backendConfigReady">
+      <ProductSegmentedTabs
+        :tabs="settingsTabs"
+        :active-tab="activeSettingsTab"
+        aria-label="漫画分析设置分类"
+        class="insight-settings-tabs"
+        @update:active-tab="updateSettingsTab"
+      >
+        <template #tabIcon="{ tab }">{{ settingsTabGlyph(tab.id) }}</template>
+      </ProductSegmentedTabs>
+
+      <VlmSettingsTab
+        v-if="hasVisitedSettingsTab('vlm')"
+        v-show="activeSettingsTab === 'vlm'"
+        :sync-request-id="syncRequestId"
+        @update:config="vlmDraft = $event"
+        @show-message="showMessage"
+      />
+
+      <LlmSettingsTab
+        v-if="hasVisitedSettingsTab('llm')"
+        v-show="activeSettingsTab === 'llm'"
+        :sync-request-id="syncRequestId"
+        @update:config="llmDraft = $event"
+        @show-message="showMessage"
+      />
+
+      <BatchSettingsTab
+        v-if="hasVisitedSettingsTab('batch')"
+        v-show="activeSettingsTab === 'batch'"
+        :sync-request-id="syncRequestId"
+        @update:config="batchDraft = $event"
+      />
+
+      <EmbeddingSettingsTab
+        v-if="hasVisitedSettingsTab('embedding')"
+        v-show="activeSettingsTab === 'embedding'"
+        :sync-request-id="syncRequestId"
+        @update:config="embeddingDraft = $event"
+        @show-message="showMessage"
+      />
+
+      <RerankerSettingsTab
+        v-if="hasVisitedSettingsTab('reranker')"
+        v-show="activeSettingsTab === 'reranker'"
+        :sync-request-id="syncRequestId"
+        @update:config="rerankerDraft = $event"
+        @show-message="showMessage"
+      />
+
+      <PromptsSettingsTab
+        v-if="hasVisitedSettingsTab('prompts')"
+        v-show="activeSettingsTab === 'prompts'"
+        :sync-request-id="syncRequestId"
+        @update:prompts="promptsDraft = $event"
+        @show-message="showMessage"
+      />
+
+      <ImageGenSettingsTab
+        v-if="hasVisitedSettingsTab('imagegen')"
+        v-show="activeSettingsTab === 'imagegen'"
+        :sync-request-id="syncRequestId"
+        @update:config="imageGenDraft = $event"
+        @show-message="showMessage"
+      />
+    </fieldset>
+
+    <template #footer>
+      <ProductActionRow aria-label="漫画分析设置操作" variant="dialog">
+        <UiButton variant="secondary" :disabled="isSaving" @click="close">取消</UiButton>
+        <UiButton
+          variant="primary"
+          :disabled="isSaving || isLoadingConfig || !backendConfigReady"
+          @click="saveSettings"
+        >
+          {{ isSaving ? '保存中...' : '保存' }}
+        </UiButton>
+      </ProductActionRow>
+    </template>
+  </BaseModal>
+</template>
+
+<style scoped>
+.insight-settings-tabs {
+  --product-segmented-tabs-active-background: var(--color-surface-brand);
+  --product-segmented-tabs-active-text: var(--color-text-inverse);
+  --product-segmented-tabs-active-shadow: none;
+  --product-segmented-tabs-background: transparent;
+  --product-segmented-tabs-padding: 0 0 8px;
+  --product-segmented-tabs-radius: 0;
+  --product-segmented-tabs-tab-radius: 4px;
+
+  margin-bottom: 16px;
+  border-width: 0 0 1px;
+}
+
+.insight-settings-message {
+  margin-bottom: 12px;
+}
+
+.insight-settings-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.insight-settings-loading {
+  margin: 0;
+  padding: 48px 24px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+</style>
