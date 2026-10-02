@@ -11,7 +11,8 @@
    直排時「」『』會被渲染器轉成直排引號，比“”自然得多。
 
 環境變數 SABER_ZH_HANT_REGION 可選 tw（預設）、hk、off（關閉全部後處理）。
-OpenCC 未安裝時只做標點規範化。
+優先使用已安裝的 opencc 套件；未安裝時改用 src/third_party/opencc 內附的副本，
+保證簡轉繁一定會執行。
 """
 
 from __future__ import annotations
@@ -43,19 +44,28 @@ def configured_region(environ=os.environ) -> str | None:
     return region
 
 
-@lru_cache(maxsize=4)
-def _converter(config: str):
+def _opencc_class():
     try:
         from opencc import OpenCC
+        return OpenCC
     except ImportError:
-        logger.warning(
-            "未安裝 opencc（pip install opencc-python-reimplemented），"
-            "譯文只做標點規範化，不做簡轉繁"
-        )
+        pass
+    try:
+        from src.third_party.opencc import OpenCC
+        return OpenCC
+    except ImportError:
+        logger.error("找不到 OpenCC（內附副本也遺失），譯文無法簡轉繁")
+        return None
+
+
+@lru_cache(maxsize=4)
+def _converter(config: str):
+    opencc_class = _opencc_class()
+    if opencc_class is None:
         return None
     for name in (config, f"{config}.json"):
         try:
-            return OpenCC(name)
+            return opencc_class(name)
         except Exception:
             continue
     logger.warning("OpenCC 無法載入配置 %s", config)
@@ -104,3 +114,17 @@ def postprocess_translation(text: str, environ=os.environ) -> str:
     if not region:
         return text
     return normalize_punctuation(to_traditional(text, region))
+
+
+def ensure_traditional_for_render(text: str, environ=os.environ) -> str:
+    """渲染前最後一道保險：只做簡轉繁，不改標點。
+
+    覆蓋使用者手動輸入、舊專案、外部匯入等沒有經過翻譯後處理的文字。
+    已經是繁體的文字不會被改動。
+    """
+    if not isinstance(text, str) or not _CJK_RE.search(text):
+        return text
+    region = configured_region(environ)
+    if not region:
+        return text
+    return to_traditional(text, region)

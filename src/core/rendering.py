@@ -19,6 +19,7 @@ except ImportError:
 from src.shared import constants
 from src.shared.memory_errors import is_memory_allocation_error
 from src.shared.path_helpers import get_font_path
+from src.shared.zh_hant import ensure_traditional_for_render
 
 # 类型提示（避免循环导入）
 if TYPE_CHECKING:
@@ -1870,7 +1871,7 @@ def render_bubbles_unified(
     logger.debug(f"[统一渲染] 开始渲染 {len(bubble_states)} 个气泡...")
     
     for i, state in enumerate(bubble_states):
-        text = state.translated_text
+        text = ensure_traditional_for_render(state.translated_text)
         if not text:
             continue
         

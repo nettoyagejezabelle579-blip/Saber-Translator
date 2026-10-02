@@ -71,9 +71,10 @@ export const DEFAULT_HYBRID_OCR: HybridOcrSettings = {
 }
 
 export const DEFAULT_TRANSLATION_SERVICE: TranslationServiceSettings = {
-  provider: 'siliconflow',
+  // DeepSeek: strong Japanese→Chinese, cheap and fast, fewer refusals on adult fiction.
+  provider: 'deepseek',
   apiKey: '',
-  modelName: '',
+  modelName: 'deepseek-chat',
   customBaseUrl: '',
   openaiOptions: createDefaultOpenAiOptions({
     execution: {
@@ -142,7 +143,8 @@ export const DEFAULT_PRECISE_MASK: PreciseMaskSettings = {
 }
 
 export const DEFAULT_PARALLEL: ParallelSettings = {
-  enabled: false,
+  // Overlap local detection/OCR with online translation; DL work stays serialized.
+  enabled: true,
   deepLearningLockSize: 1
 }
 
