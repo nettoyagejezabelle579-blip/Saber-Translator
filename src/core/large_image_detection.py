@@ -184,7 +184,8 @@ class LargeImageDetectorWrapper:
             blocks = merge_textlines(
                 valid_textlines, im_w, im_h,
                 edge_ratio_threshold=edge_ratio_threshold,
-                verbose=True
+                verbose=True,
+                image=img_cv,
             )
             logger.debug(f"合并后得到 {len(blocks)} 个文本块")
         else:

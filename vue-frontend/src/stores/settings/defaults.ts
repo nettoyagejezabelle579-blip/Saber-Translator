@@ -176,6 +176,6 @@ export function createDefaultSettings(): TranslationSettings {
     removeTextWithOcr: false,
     compressVisionImages: true,
     lamaDisableResize: false,
-    lamaRegionalInpainting: false
+    lamaRegionalInpainting: true
   }
 }

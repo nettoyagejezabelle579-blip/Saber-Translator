@@ -144,6 +144,36 @@ SINGLE_LINEAR_BLOCK_CHARS = {
     '～', '〜', '〰',
 }
 
+# --- 中文避头尾（禁则）---
+# 不能出现在行首/列首的字符（句读、收尾括号、延长号等），以及不能留在行尾/列尾的
+# 开括号。换行时用"推出"处理：把前一个字一起带到下一行，避免超出气泡边界。
+NO_LINE_START_CHARS = set(
+    '。，、．！？!?,.;；:：」』）)】〕〉》〗﹂﹄”’…⋯～〜ー・‥♡♥‼⁉⁇⁈'
+)
+NO_LINE_END_CHARS = set('「『（(【〔〈《〖﹁﹃“‘')
+
+
+def _kinsoku_split(current_line: str, char: str) -> Tuple[str, str]:
+    """
+    当 char 放不进当前行时，返回 (留在当前行的内容, 带到新行的前缀)。
+    - char 不能出现在行首：把当前行最后一个普通字符一起推到新行；
+    - 当前行以开括号结尾：开括号移到新行。
+    """
+    if len(current_line) < 2 or current_line.endswith('>'):
+        return current_line, ''
+    last = current_line[-1]
+    if last in NO_LINE_END_CHARS:
+        return current_line[:-1], last
+    if char in NO_LINE_START_CHARS and last not in NO_LINE_START_CHARS:
+        prev = current_line[-2]
+        if prev in NO_LINE_END_CHARS:
+            if len(current_line) < 3 or current_line[-3] == '>':
+                return current_line, ''
+            return current_line[:-2], current_line[-2:]
+        return current_line[:-1], last
+    return current_line, ''
+
+
 # --- 特殊组合标点映射 (保留用于组合符号处理) ---
 SPECIAL_PUNCTUATION_PATTERNS = [
     ('...', '…'),      # 连续三个点先转为省略号
@@ -1125,10 +1155,17 @@ def draw_multiline_text_vertical(draw, text, font, x, y, max_width, max_height,
                         current_line += char
                         current_column_height += line_height_approx
                     else:
-                        lines.append(current_line)
-                        line_heights.append(current_column_height)
-                        current_line = char
-                        current_column_height = line_height_approx
+                        keep, carry = _kinsoku_split(current_line, char)
+                        if keep:
+                            lines.append(keep)
+                            line_heights.append(
+                                current_column_height
+                                - len(carry) * line_height_approx
+                            )
+                        current_line = carry + char
+                        current_column_height = (
+                            len(carry) + 1
+                        ) * line_height_approx
 
     # 添加最后一行
     if current_line:
@@ -1511,12 +1548,14 @@ def draw_multiline_text_horizontal(draw, text, font, x, y, max_width, max_height
             current_line_widths.append(char_width)
             current_line_width += char_width
         else:
-            if current_line:
-                lines.append(current_line)
-                line_char_widths.append(current_line_widths)
-            current_line = char
-            current_line_widths = [char_width]
-            current_line_width = char_width
+            keep, carry = _kinsoku_split(current_line, char)
+            carry_widths = current_line_widths[len(keep):]
+            if keep:
+                lines.append(keep)
+                line_char_widths.append(current_line_widths[:len(keep)])
+            current_line = carry + char
+            current_line_widths = carry_widths + [char_width]
+            current_line_width = sum(current_line_widths)
 
     # 添加最后一行
     if current_line:

@@ -51,6 +51,7 @@ from src.core.config_models import validate_bubble_payload
 from src.core.ocr_types import OcrResult
 from src.shared.image_helpers import encode_vision_image
 from src.shared.paddleocr_vl import PADDLEOCR_VL_LANGUAGE_NAMES
+from src.shared.zh_hant import postprocess_translation
 from src.shared.user_logging import (
     inline_log_text,
     log_result,
@@ -1772,6 +1773,9 @@ class TranslationPipelineService:
             }
             for requested in requested_bubbles:
                 bubble_id = requested["bubbleId"]
+                translated_by_id[bubble_id] = postprocess_translation(
+                    translated_by_id[bubble_id]
+                )
                 updated[index_by_id[bubble_id]]["translatedText"] = (
                     translated_by_id[bubble_id]
                 )
@@ -2616,7 +2620,7 @@ class TranslationPipelineService:
             constraints,
         )
         for index, payload in enumerate(updated):
-            payload["translatedText"] = translated[index]
+            payload["translatedText"] = postprocess_translation(translated[index])
             payload["textboxText"] = (
                 textbox[index] if index < len(textbox) else ""
             )

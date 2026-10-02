@@ -15,6 +15,7 @@ import networkx as nx
 
 from .data_types import TextLine, TextBlock
 from .geometry import can_merge_textlines
+from .bubble_regions import compute_bubble_labels, labels_conflict
 
 logger = logging.getLogger("TextlineMerge")
 
@@ -161,11 +162,43 @@ def _split_text_region(
         return ans
 
 
+def _separate_conflicting_bubbles(
+    textlines: List[TextLine],
+    node_set: Set[int],
+    bubble_labels: Sequence[Optional[int]],
+) -> List[Set[int]]:
+    """
+    一个连通分量里若出现多个不同的气泡编号（通过编号未知的文本行"桥接"而来），
+    按气泡编号拆开；编号未知的文本行归入距离最近的那一组。
+    """
+    known = {bubble_labels[i] for i in node_set if bubble_labels[i] is not None}
+    if len(known) <= 1:
+        return [node_set]
+    groups = {label: set() for label in known}
+    unknown = []
+    for idx in node_set:
+        label = bubble_labels[idx]
+        if label is None:
+            unknown.append(idx)
+        else:
+            groups[label].add(idx)
+    for idx in unknown:
+        best_label = min(
+            known,
+            key=lambda label: min(
+                textlines[idx].poly_distance(textlines[j]) for j in groups[label]
+            ),
+        )
+        groups[best_label].add(idx)
+    return [group for group in groups.values() if group]
+
+
 def _merge_textlines_to_regions(
     textlines: List[TextLine],
     width: int,
     height: int,
-    edge_ratio_threshold: float = 0.0
+    edge_ratio_threshold: float = 0.0,
+    bubble_labels: Optional[Sequence[Optional[int]]] = None,
 ) -> List[TextBlock]:
     """
     合并文本行到文本区域
@@ -175,6 +208,8 @@ def _merge_textlines_to_regions(
         width: 图像宽度
         height: 图像高度
         edge_ratio_threshold: 边缘距离比例阈值，用于断开距离差异过大的连接
+        bubble_labels: 可选，每条文本行所属的气泡编号（None 表示未知）。
+            编号不同的文本行不会被合并到同一个文本块。
     """
     if not textlines:
         return []
@@ -188,6 +223,10 @@ def _merge_textlines_to_regions(
     for (u, v) in itertools.combinations(range(len(textlines)), 2):
         line_u = textlines[u]
         line_v = textlines[v]
+        if bubble_labels is not None and labels_conflict(
+            bubble_labels[u], bubble_labels[v]
+        ):
+            continue
         if can_merge_textlines(line_u, line_v):
             poly_dist = line_u.poly_distance(line_v)
             G.add_edge(u, v, distance=poly_dist)
@@ -222,8 +261,16 @@ def _merge_textlines_to_regions(
     
     # step 2: 分割区域
     region_indices: List[Set[int]] = []
-    for node_set in nx.algorithms.components.connected_components(G):
-        region_indices.extend(_split_text_region(textlines, node_set, width, height))
+    for component in nx.algorithms.components.connected_components(G):
+        sub_sets = (
+            _separate_conflicting_bubbles(textlines, component, bubble_labels)
+            if bubble_labels is not None
+            else [component]
+        )
+        for node_set in sub_sets:
+            region_indices.extend(
+                _split_text_region(textlines, node_set, width, height)
+            )
     
     # step 3: 创建 TextBlock
     blocks = []
@@ -242,7 +289,8 @@ def merge_textlines(
     image_width: int,
     image_height: int,
     edge_ratio_threshold: float = 0.0,
-    verbose: bool = False
+    verbose: bool = False,
+    image: Optional[np.ndarray] = None,
 ) -> List[TextBlock]:
     """
     统一的文本行合并接口
@@ -253,6 +301,8 @@ def merge_textlines(
         image_height: 图像高度
         edge_ratio_threshold: 边缘距离比例阈值
         verbose: 是否输出详细日志
+        image: 可选，原图（BGR）。提供时启用气泡感知合并，
+            避免把相邻两个气泡的文字合并成一个文本块。
     
     Returns:
         List[TextBlock]: 合并后的文本块列表
@@ -275,8 +325,20 @@ def merge_textlines(
     if not textlines:
         return []
     
+    bubble_labels = None
+    if image is not None and len(textlines) > 1:
+        from src.shared import constants
+
+        if constants.ENABLE_BUBBLE_AWARE_MERGE:
+            try:
+                bubble_labels = compute_bubble_labels(image, textlines)
+            except Exception:
+                logger.warning("气泡区域标注失败，回退到纯几何合并", exc_info=True)
+                bubble_labels = None
+
     blocks = _merge_textlines_to_regions(
-        textlines, image_width, image_height, edge_ratio_threshold
+        textlines, image_width, image_height, edge_ratio_threshold,
+        bubble_labels=bubble_labels,
     )
     
     if verbose:

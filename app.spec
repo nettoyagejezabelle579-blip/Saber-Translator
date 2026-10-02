@@ -79,7 +79,7 @@ for pkg in critical_packages:
     print(f"[SPEC] collect_all({pkg}): OK")
 
 # 其他库的数据文件
-for pkg in ['unidic_lite', 'fugashi', 'litelama']:
+for pkg in ['unidic_lite', 'fugashi', 'litelama', 'opencc']:
     datas += collect_data_files(pkg)
     print(f"[SPEC] collect_data_files({pkg}): OK")
 

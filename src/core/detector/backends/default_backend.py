@@ -127,15 +127,97 @@ class DefaultBackend(BaseTextDetector):
         """
         from src.interfaces.default.imgproc import resize_aspect_ratio
         
-        # 双边滤波降噪 (与原实现一致)
-        image_filtered = cv2.bilateralFilter(image, 17, 80, 80)
-        
+        im_h, im_w = image.shape[:2]
+        scale = self.detect_size / max(im_h, im_w)
+        if scale >= 1:
+            # 双边滤波降噪 (与原实现一致)
+            image_filtered = cv2.bilateralFilter(image, 17, 80, 80)
+            return resize_aspect_ratio(image_filtered, self.detect_size)
+
+        # 大图先缩小再滤波：双边滤波是 CPU 上最耗时的预处理，
+        # 在原图上做 d=17 的滤波比在检测尺寸上做慢一个数量级，
+        # 而结果最终都会被缩放到检测尺寸。滤波直径按缩放比例同步缩小。
+        small = cv2.resize(
+            image,
+            (max(1, round(im_w * scale)), max(1, round(im_h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+        diameter = max(5, int(round(17 * scale)) | 1)
+        image_filtered = cv2.bilateralFilter(small, diameter, 80, 80)
         img_resized, ratio, pad_w, pad_h = resize_aspect_ratio(
             image_filtered,
             self.detect_size,
         )
-        return img_resized, ratio, pad_w, pad_h
+        return img_resized, ratio * scale, pad_w, pad_h
     
+    def _rescue_faint_lines(
+        self,
+        db: np.ndarray,
+        existing: List[TextLine],
+        resized_h: int,
+        resized_w: int,
+        ratio_w: float,
+        ratio_h: float,
+    ) -> List[TextLine]:
+        """
+        漏检补救：在同一张概率图上用更低的阈值再提取一次轮廓，
+        只补回与已有文本行不重叠、形状像文本行、置信度尚可的区域。
+        不需要额外的模型推理，CPU 开销可以忽略。
+        """
+        from src.shared import constants
+        from src.interfaces.ctd.utils.db_utils import SegDetectorRepresenter
+
+        low_thresh = float(constants.DEFAULT_DETECTOR_RESCUE_THRESHOLD)
+        text_threshold = getattr(self, 'text_threshold', DEFAULT_TEXT_THRESHOLD)
+        if low_thresh <= 0 or low_thresh >= text_threshold:
+            return []
+        min_score = float(constants.DEFAULT_DETECTOR_RESCUE_MIN_SCORE)
+
+        rescue_rep = SegDetectorRepresenter(
+            thresh=low_thresh,
+            unclip_ratio=getattr(self, 'unclip_ratio', DEFAULT_UNCLIP_RATIO),
+        )
+        boxes, scores = rescue_rep(db, height=resized_h, width=resized_w)
+        boxes, scores = boxes[0], scores[0]
+        if boxes.size == 0:
+            return []
+
+        existing_polys = [line.polygon for line in existing]
+        rescued: List[TextLine] = []
+        for pts, score in zip(boxes, scores):
+            if score < min_score:
+                continue
+            pts = (pts.astype(np.float64) * (ratio_w, ratio_h)).astype(np.int32)
+            if pts.shape[0] != 4 or pts.sum() <= 0:
+                continue
+            try:
+                line = TextLine(pts=pts, confidence=float(min(1.0, score)))
+            except ValueError:
+                continue
+            # 太小或不像文本行（接近正方形的小斑点）的区域不要
+            if line.area < 64 or line.font_size < 8:
+                continue
+            ar = float(line.aspect_ratio)
+            elongation = max(ar, 1.0 / ar) if ar > 0 else 1.0
+            if elongation < 1.5 and line.area < 4 * line.font_size ** 2:
+                continue
+            poly = line.polygon
+            if poly.area <= 0:
+                continue
+            overlaps = any(
+                poly.intersection(other).area > 0.2 * min(poly.area, other.area)
+                for other in existing_polys
+                if other.area > 0 and poly.intersects(other)
+            )
+            if overlaps:
+                continue
+            rescued.append(line)
+            existing_polys.append(poly)
+
+        if rescued:
+            logger.debug(f"漏检补救: 补回 {len(rescued)} 个低置信度文本行")
+        return rescued
+
     @torch.no_grad()
     def _detect_raw(
         self,
@@ -202,6 +284,12 @@ class DefaultBackend(BaseTextDetector):
                     textline = TextLine(pts=pts, confidence=float(score))
                     if textline.area > 16:
                         textlines.append(textline)
+
+        textlines.extend(
+            self._rescue_faint_lines(
+                db, textlines, img_resized_h, img_resized_w, ratio_w, ratio_h
+            )
+        )
         
         # 处理掩码 - 缩放到原图尺寸
         # mask 输出是 1/2 分辨率（从 up4 输出，经过 upconv7 上采样后是 H/2）

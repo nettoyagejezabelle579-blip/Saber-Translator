@@ -170,6 +170,17 @@ PADDLEOCR_VL_MODEL_DIR = 'models/paddleocr_vl_1_6'
 # 推荐值 3.0-5.0，0 表示禁用
 CTD_EDGE_RATIO_THRESHOLD = 0.0
 
+# 气泡感知合并：利用气泡描边把相邻气泡的文本行分开，防止"两个气泡被识别成一个"
+ENABLE_BUBBLE_AWARE_MERGE = True
+
+# Default(DBNet) 检测器漏检补救：在同一张概率图上用更低阈值补回浅色/小字号文本行。
+# 不增加模型推理次数。阈值设为 0 可关闭。
+DEFAULT_DETECTOR_RESCUE_THRESHOLD = 0.3
+DEFAULT_DETECTOR_RESCUE_MIN_SCORE = 0.42
+
+# 智能纯色填充：逐气泡采样底色、去除文字抗锯齿残影、图上文字改用局部修复
+SMART_SOLID_FILL = True
+
 # 辅助一阶段 YSGYolo 检测配置
 ENABLE_AUX_YOLO_DETECTION = False
 AUX_YOLO_CONF_THRESHOLD = 0.4

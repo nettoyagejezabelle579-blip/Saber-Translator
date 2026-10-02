@@ -84,6 +84,115 @@ def create_bubble_mask(image_size, bubble_coords, bubble_polygons=None):
 
     return mask
 
+# ========== 智能纯色填充 ==========
+
+# 背景像素颜色标准差低于此值视为纯色气泡底
+_UNIFORM_BG_STD = 20.0
+# 采样到的气泡底色与用户填充色的 RGB 距离不超过此值时，用采样色替代
+# （例如扫描件的米黄/灰白气泡用 #FFFFFF 填充会留下明显色块）
+_SAMPLE_COLOR_MAX_DISTANCE = 60.0
+_MIN_BG_SAMPLES = 20
+
+
+def _bubble_region_mask(shape, coords, polygon):
+    region = np.zeros(shape[:2], dtype=np.uint8)
+    if polygon:
+        cv2.fillPoly(region, [np.asarray(polygon, dtype=np.int32)], 1)
+    else:
+        x1, y1, x2, y2 = coords
+        cv2.rectangle(region, (x1, y1), (x2, y2), 1, -1)
+    return region.astype(bool)
+
+
+def _pick_fill_color(samples, configured):
+    """在采样底色和用户填充色之间选择。"""
+    if samples.shape[0] < _MIN_BG_SAMPLES:
+        return np.asarray(configured, dtype=np.uint8), True
+    median = np.median(samples, axis=0)
+    uniform = float(samples.std(axis=0).max()) <= _UNIFORM_BG_STD
+    distance = float(np.linalg.norm(median - np.asarray(configured, dtype=np.float32)))
+    if distance <= _SAMPLE_COLOR_MAX_DISTANCE:
+        return np.clip(np.rint(median), 0, 255).astype(np.uint8), uniform
+    return np.asarray(configured, dtype=np.uint8), uniform
+
+
+def _smart_solid_fill(result_np, fill_mask, bubble_coords, bubble_polygons, configured):
+    """
+    逐气泡的纯色填充：
+    - 纯色底的气泡：用采样到的气泡底色填充，并向外多覆盖 1px 抗锯齿边缘，去掉文字残影；
+    - 有纹理/渐变底（图上文字）：用 OpenCV Telea 局部修复代替一整块纯色，CPU 开销很小；
+    - 气泡之外的用户笔刷区域：保持使用配置的填充色。
+    """
+    h, w = fill_mask.shape
+    handled = np.zeros_like(fill_mask)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    pad = 8
+    for index, coords in enumerate(bubble_coords):
+        polygon = bubble_polygons[index] if bubble_polygons is not None else None
+        x1, y1, x2, y2 = coords
+        if polygon:
+            pts = np.asarray(polygon)
+            x1, y1 = int(pts[:, 0].min()), int(pts[:, 1].min())
+            x2, y2 = int(pts[:, 0].max()), int(pts[:, 1].max())
+        cx1, cy1 = max(0, x1 - pad), max(0, y1 - pad)
+        cx2, cy2 = min(w, x2 + pad + 1), min(h, y2 + pad + 1)
+        if cx2 <= cx1 or cy2 <= cy1:
+            continue
+
+        region = _bubble_region_mask((h, w), coords, polygon)[cy1:cy2, cx1:cx2]
+        crop_fill = fill_mask[cy1:cy2, cx1:cx2] & ~handled[cy1:cy2, cx1:cx2]
+        selected = crop_fill & region
+        if not selected.any():
+            continue
+
+        crop = result_np[cy1:cy2, cx1:cx2]
+        grown = cv2.dilate(selected.astype(np.uint8), kernel, iterations=2).astype(bool)
+        background = region & ~grown
+        color, uniform = _pick_fill_color(crop[background].astype(np.float32), configured)
+
+        if uniform:
+            target = cv2.dilate(selected.astype(np.uint8), kernel, iterations=1).astype(bool)
+            target &= region
+            crop[target] = color
+        else:
+            inpaint_mask = cv2.dilate(selected.astype(np.uint8), kernel, iterations=1) * 255
+            repaired = cv2.inpaint(crop, inpaint_mask, 3, cv2.INPAINT_TELEA)
+            target = inpaint_mask.astype(bool) & region
+            crop[target] = repaired[target]
+        handled[cy1:cy2, cx1:cx2] |= selected
+
+    remaining = fill_mask & ~handled
+    if remaining.any():
+        result_np[remaining] = configured
+    return result_np
+
+
+def _sampled_box_fill_color(image_pil, coords, polygon, fill_color):
+    """整框填充（无精确掩膜）时，用框内像素中位数校正填充色。"""
+    if not constants.SMART_SOLID_FILL:
+        return fill_color
+    configured = np.array(
+        [int(fill_color[1:3], 16), int(fill_color[3:5], 16), int(fill_color[5:7], 16)],
+        dtype=np.float32,
+    )
+    x1, y1, x2, y2 = coords
+    if polygon:
+        pts = np.asarray(polygon)
+        x1, y1 = int(pts[:, 0].min()), int(pts[:, 1].min())
+        x2, y2 = int(pts[:, 0].max()), int(pts[:, 1].max())
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(image_pil.width, x2), min(image_pil.height, y2)
+    if x2 - x1 < 2 or y2 - y1 < 2:
+        return fill_color
+    crop = image_pil.crop((x1, y1, x2, y2)).convert('RGB')
+    try:
+        samples = np.asarray(crop, dtype=np.float32).reshape(-1, 3)
+    finally:
+        crop.close()
+    color, _ = _pick_fill_color(samples, configured)
+    return '#%02x%02x%02x' % tuple(int(v) for v in color)
+
+
 def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_METHOD, fill_color=None, bubble_polygons=None, precise_mask=None, user_mask=None, mask_dilate_size=0, mask_box_expand_ratio=0, lama_model='lama_mpe', disable_resize=False, regional_inpainting=False):
     """
     根据指定方法修复或填充图像中的气泡区域。
@@ -301,7 +410,16 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
                 b = int(fill_color[5:7], 16)
 
                 fill_mask = bubble_mask_np < 128
-                result_np[fill_mask] = [r, g, b]
+                if constants.SMART_SOLID_FILL:
+                    result_np = _smart_solid_fill(
+                        result_np,
+                        fill_mask,
+                        bubble_coords,
+                        bubble_polygons,
+                        (r, g, b),
+                    )
+                else:
+                    result_np[fill_mask] = [r, g, b]
                 replacement = Image.fromarray(result_np)
                 result_img.close()
                 result_img = replacement
@@ -309,13 +427,15 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
             else:
                 draw = ImageDraw.Draw(result_img)
                 for i, (x1, y1, x2, y2) in enumerate(bubble_coords):
-                    if bubble_polygons is not None:
-                        polygon = bubble_polygons[i]
-                        if polygon:
-                            pts = [(p[0], p[1]) for p in polygon]
-                            draw.polygon(pts, fill=fill_color)
-                            continue
-                    draw.rectangle(((x1, y1), (x2, y2)), fill=fill_color)
+                    polygon = bubble_polygons[i] if bubble_polygons is not None else None
+                    box_color = _sampled_box_fill_color(
+                        image_pil, (x1, y1, x2, y2), polygon, fill_color
+                    )
+                    if polygon:
+                        pts = [(p[0], p[1]) for p in polygon]
+                        draw.polygon(pts, fill=box_color)
+                        continue
+                    draw.rectangle(((x1, y1), (x2, y2)), fill=box_color)
             logger.debug("纯色填充完成")
 
         return result_img

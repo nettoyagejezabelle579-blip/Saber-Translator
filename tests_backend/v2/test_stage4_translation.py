@@ -1594,7 +1594,7 @@ def test_translation_uses_current_page_layout_and_inpainting_defaults(
     assert algorithms.repair_configs == [
         {
             "disable_resize": False,
-            "regional_inpainting": False,
+            "regional_inpainting": True,
             "method": "lama",
             "lama_model": method,
             "mask_dilate_size": 10,

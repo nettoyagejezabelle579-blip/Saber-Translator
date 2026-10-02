@@ -752,7 +752,7 @@ def test_bubble_translate_freezes_credential_and_publishes_document(
     assert claimed is not None
     fence, operation = claimed
     result = service.handle(fence, operation)
-    assert result["translatedText"] == "译文"
+    assert result["translatedText"] == "譯文"  # 譯文會被規範為繁體
     with platform["engine"].connect() as connection:
         payload = json.loads(
             connection.execute(
@@ -771,7 +771,7 @@ def test_bubble_translate_freezes_credential_and_publishes_document(
                 render_requests.c.page_id == platform["page_id"]
             )
         ).scalar_one()
-    assert payload["translatedText"] == "译文"
+    assert payload["translatedText"] == "譯文"
     assert revision == 2
     assert render_revision == 2
     assert repository.get(str(accepted["operationId"]))["status"] == "completed"

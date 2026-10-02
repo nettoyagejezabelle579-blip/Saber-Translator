@@ -419,6 +419,9 @@ def run_worker(args: object) -> int:
                 ),
                 resident_models=resident_models,
             )
+            from src.shared.cpu_threads import configure_cpu_threads
+
+            configure_cpu_threads()
             preload_local_models(resident_models)
             maintenance = WorkerMaintenance(
                 data_root=data_root,

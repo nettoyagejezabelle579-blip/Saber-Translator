@@ -260,6 +260,9 @@ class InteractivePageOperationService:
             raise RuntimeError(
                 "single-bubble textbox translation returned an invalid result count"
             )
+        from src.shared.zh_hant import postprocess_translation
+
+        values = [postprocess_translation(values[0])]
         payload["translatedText"] = values[0]
         payload["textboxText"] = textbox[0] if textbox else ""
         new_revision = int(page["document_revision"]) + 1
