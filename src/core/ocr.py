@@ -1,5 +1,8 @@
 import logging
 import math
+import re
+
+import numpy as np
 from typing import List, Optional
 from PIL import Image
 import io
@@ -273,9 +276,62 @@ def _recognize_with_paddle_ocr_results(
         raise
 
 
+_OCR_IGNORED_CHARS = re.compile(r"[\s．.。、，,・…‥ー〜～！？!?「」『』]")
+
+
+def _line_bounds(line):
+    points = np.asarray(line["polygon"], dtype=np.int32).reshape(-1, 2)
+    x1, y1 = points.min(axis=0)
+    x2, y2 = points.max(axis=0)
+    return int(x1), int(y1), int(x2) + 1, int(y2) + 1
+
+
+def _expected_char_count(textlines) -> float:
+    """由文字行形狀估算字數：直排 = 高 / 寬，橫排 = 寬 / 高。"""
+    total = 0.0
+    for line in textlines:
+        x1, y1, x2, y2 = _line_bounds(line)
+        width, height = max(x2 - x1, 1), max(y2 - y1, 1)
+        total += max(width, height) / min(width, height)
+    return total
+
+
+def _reading_order(textlines):
+    vertical = sum(1 for line in textlines if line.get("direction") == "v")
+    if vertical * 2 >= len(textlines):
+        # 日漫直排：由右至左
+        return sorted(textlines, key=lambda line: -(_line_bounds(line)[0] + _line_bounds(line)[2]))
+    return sorted(textlines, key=lambda line: _line_bounds(line)[1] + _line_bounds(line)[3])
+
+
+def _manga_ocr_by_chunks(img_np, textlines, chunk_size: int) -> str:
+    height, width = img_np.shape[:2]
+    ordered = _reading_order(textlines)
+    parts = []
+    for start in range(0, len(ordered), chunk_size):
+        bounds = [_line_bounds(line) for line in ordered[start:start + chunk_size]]
+        x1 = min(b[0] for b in bounds)
+        y1 = min(b[1] for b in bounds)
+        x2 = max(b[2] for b in bounds)
+        y2 = max(b[3] for b in bounds)
+        pad = max(4, round(0.15 * min(x2 - x1, y2 - y1)))
+        x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+        x2, y2 = min(width, x2 + pad), min(height, y2 + pad)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        with Image.fromarray(img_np[y1:y2, x1:x2]) as chunk:
+            parts.append(recognize_japanese_text(chunk).strip())
+    return "".join(part for part in parts if part)
+
+
+def _ocr_char_count(text: str) -> int:
+    return len(_OCR_IGNORED_CHARS.sub("", text))
+
+
 def _recognize_with_manga_ocr_results(
     image_pil,
     bubble_coords,
+    textlines_per_bubble=None,
     *,
     primary_engine='manga_ocr',
     fallback_used=False,
@@ -283,12 +339,29 @@ def _recognize_with_manga_ocr_results(
     img_np = image_to_rgb_array(image_pil)
     results: List[OcrResult] = []
     logger.debug(f"开始使用 MangaOCR 逐个识别 {len(bubble_coords)} 个气泡...")
+    retry_ratio = float(getattr(constants, "MANGA_OCR_CHUNK_RETRY_RATIO", 0) or 0)
+    chunk_size = max(1, int(getattr(constants, "MANGA_OCR_CHUNK_LINES", 2)))
 
     for i, (x1, y1, x2, y2) in enumerate(bubble_coords):
         try:
             bubble_img_np = img_np[y1:y2, x1:x2]
             with Image.fromarray(bubble_img_np) as bubble_img_pil:
                 text = recognize_japanese_text(bubble_img_pil)
+            textlines = (
+                textlines_per_bubble[i]
+                if isinstance(textlines_per_bubble, list) and i < len(textlines_per_bubble)
+                else None
+            )
+            if retry_ratio > 0 and textlines and len(textlines) > chunk_size:
+                # 整個大氣泡被縮到 224px 時容易漏字：字數明顯偏少就分段重新識別
+                expected = _expected_char_count(textlines)
+                if _ocr_char_count(text) < expected * retry_ratio:
+                    chunked = _manga_ocr_by_chunks(img_np, textlines, chunk_size)
+                    if _ocr_char_count(chunked) > _ocr_char_count(text):
+                        logger.debug(
+                            "气泡 %d MangaOCR 分段重识别: %r -> %r", i, text, chunked
+                        )
+                        text = chunked
             results.append(
                 create_ocr_result(
                     text,
@@ -523,6 +596,7 @@ def _recognize_with_engine(
         return _recognize_with_manga_ocr_results(
             image_pil,
             bubble_coords,
+            textlines_per_bubble,
             primary_engine=effective_primary_engine,
             fallback_used=fallback_used,
         )

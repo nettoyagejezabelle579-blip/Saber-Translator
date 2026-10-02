@@ -181,6 +181,21 @@ DEFAULT_DETECTOR_RESCUE_MIN_SCORE = 0.42
 # 智能纯色填充：逐气泡采样底色、去除文字抗锯齿残影、图上文字改用局部修复
 SMART_SOLID_FILL = True
 
+# MangaOCR 漏字重試：整個氣泡一次識別的字數明顯少於文字行面積估算的字數時，
+# 改為每次 2 列（行）分段識別再拼接。比例設為 0 可關閉。
+MANGA_OCR_CHUNK_RETRY_RATIO = 0.6
+MANGA_OCR_CHUNK_LINES = 2
+
+# LaMa 分區域修復時，周圍是純色（白色氣泡等）的區域直接用周圍顏色填充，
+# 不跑模型：更快，也不會在白底上留下灰色污漬。數值是允許的周圍顏色標準差。
+LAMA_FLAT_FILL_MAX_STD = 6.0
+
+# 自動文字顏色：直接量測原圖文字像素（比 48px 模型推測更準、也不需要再跑模型）
+PIXEL_TEXT_COLOR = True
+
+# 自動字號不超過原文字號（由文字行寬度估算），讓譯文大小和原圖一致
+MATCH_SOURCE_FONT_SIZE = True
+
 # 辅助一阶段 YSGYolo 检测配置
 ENABLE_AUX_YOLO_DETECTION = False
 AUX_YOLO_CONF_THRESHOLD = 0.4

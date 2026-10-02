@@ -24,7 +24,7 @@ DEFAULT_TEXT_STYLE: dict[str, object] = {
     "textColor": "#000000",
     "fillColor": "#FFFFFF",
     "inpaintMethod": "lama_manga",
-    "useAutoTextColor": False,
+    "useAutoTextColor": True,  # 量測原圖文字像素，顏色與原文一致
     "strokeEnabled": True,
     "strokeColor": "#FFFFFF",
     "strokeWidth": 3,

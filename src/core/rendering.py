@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple, TYPE_CHECKING
 from PIL import Image, ImageDraw, ImageFont
+import cv2
 import numpy as np
 
 # FreeType 字体回退支持
@@ -673,18 +674,46 @@ def get_font(font_family_relative_path=constants.DEFAULT_FONT_RELATIVE_PATH, fon
     _font_cache[cache_key] = font
     return font
 
+# 文字行框的短邊通常比字身大一些（偵測框外擴 + 字距），換算回字號時乘上此係數
+SOURCE_FONT_SIZE_SCALE = 0.85
+
+
+def estimate_source_font_size(textlines) -> int | None:
+    """由原圖文字行估算原文字號：直排取列寬、橫排取行高（取第 75 百分位，避開振假名）。"""
+    sizes = []
+    for line in textlines or []:
+        polygon = line.get("polygon") if isinstance(line, dict) else None
+        if not polygon or len(polygon) < 3:
+            continue
+        points = np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
+        (_cx, _cy), (w, h), _angle = cv2.minAreaRect(points)
+        short_side = min(w, h)
+        if short_side >= 4:
+            sizes.append(short_side)
+    if not sizes:
+        return None
+    return int(round(float(np.percentile(sizes, 75)) * SOURCE_FONT_SIZE_SCALE))
+
+
 def calculate_auto_font_size(text, bubble_width, bubble_height, text_direction='vertical',
                              font_family_relative_path=constants.DEFAULT_FONT_RELATIVE_PATH,
-                             min_size=12, max_size=80, padding_ratio=1.0):
+                             min_size=12, max_size=80, padding_ratio=1.0, textlines=None):
     """
     使用二分法计算最佳字体大小。
     
     对于包含换行符的文本，会考虑换行符对布局的影响：
     - 竖排模式：每个换行符代表一个新列
     - 横排模式：每个换行符代表一个新行
+
+    提供 textlines 且 MATCH_SOURCE_FONT_SIZE 開啟時，字號不超過原文字號，
+    讓譯文大小與原圖一致（放不下時仍會縮小）。
     """
     if not text or not text.strip() or bubble_width <= 0 or bubble_height <= 0:
         return constants.DEFAULT_FONT_SIZE
+    if textlines and getattr(constants, "MATCH_SOURCE_FONT_SIZE", False):
+        source_size = estimate_source_font_size(textlines)
+        if source_size is not None:
+            max_size = max(min_size, min(max_size, source_size))
 
     W = bubble_width * padding_ratio
     H = bubble_height * padding_ratio

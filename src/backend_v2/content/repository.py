@@ -2284,6 +2284,7 @@ class ContentRepository:
                                         coords[3] - coords[1],
                                         payload["textDirection"],
                                         font_path,
+                                        textlines=payload.get("textlines"),
                                     )
                                     if payload["fontSize"] != calculated:
                                         renderable_change = True

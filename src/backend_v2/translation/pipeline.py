@@ -51,6 +51,8 @@ from src.core.config_models import validate_bubble_payload
 from src.core.ocr_types import OcrResult
 from src.shared.image_helpers import encode_vision_image
 from src.shared.paddleocr_vl import PADDLEOCR_VL_LANGUAGE_NAMES
+from src.shared import constants
+from src.shared.sfx_filter import is_standalone_sfx
 from src.shared.zh_hant import postprocess_translation
 from src.shared.user_logging import (
     inline_log_text,
@@ -972,10 +974,15 @@ class CoreTranslationAlgorithms:
         image: Image.Image,
         bubble_payloads: list[dict[str, Any]],
     ) -> list[Mapping[str, Any]]:
-        from src.core.color_extractor import extract_bubble_colors
-
         coords = [payload["coords"] for payload in bubble_payloads]
         textlines = [payload["textlines"] for payload in bubble_payloads]
+        if constants.PIXEL_TEXT_COLOR:
+            from src.core.text_color import measure_bubble_colors
+
+            return measure_bubble_colors(image, coords, textlines)
+
+        from src.core.color_extractor import extract_bubble_colors
+
         # ``extract_bubble_colors`` already returns serialized dictionaries.
         # Detach each mapping from the extractor-owned result.
         return [
@@ -1354,6 +1361,14 @@ class CoreTranslationAlgorithms:
         )
         if method not in {"solid", "lama"} or set(config) != required_fields:
             raise ValueError("inpainting configuration fields are invalid")
+        # 單獨語氣詞氣泡保留原圖日文，不去字
+        bubble_payloads = [
+            payload
+            for payload in bubble_payloads
+            if not is_standalone_sfx(payload.get("originalText"))
+        ]
+        if not bubble_payloads:
+            return image.copy()
         coords = [payload["coords"] for payload in bubble_payloads]
         polygons = [
             rotated_box_polygon(payload["coords"], payload["rotationAngle"])
@@ -1389,7 +1404,11 @@ class CoreTranslationAlgorithms:
 
         if config:
             raise ValueError("render configuration fields are invalid")
-        states = [BubbleState.from_dict(payload) for payload in bubble_payloads]
+        states = [
+            BubbleState.from_dict(payload)
+            for payload in bubble_payloads
+            if not is_standalone_sfx(payload.get("originalText"))
+        ]
         rendered = clean_image.copy()
         try:
             render_bubbles_unified(rendered, states)
@@ -1773,8 +1792,10 @@ class TranslationPipelineService:
             }
             for requested in requested_bubbles:
                 bubble_id = requested["bubbleId"]
-                translated_by_id[bubble_id] = postprocess_translation(
-                    translated_by_id[bubble_id]
+                translated_by_id[bubble_id] = (
+                    ""
+                    if is_standalone_sfx(requested.get("originalText"))
+                    else postprocess_translation(translated_by_id[bubble_id])
                 )
                 updated[index_by_id[bubble_id]]["translatedText"] = (
                     translated_by_id[bubble_id]
@@ -2562,19 +2583,47 @@ class TranslationPipelineService:
             )
             protected_texts.append(protected)
             restore_by_index.append(restore)
-        result = self.algorithms.translate(protected_texts, section, mode=mode)
+        # 整個氣泡只有語氣詞（あ、うん…）時保留原文，不送去翻譯
+        kept_indices = [
+            index
+            for index, text in enumerate(texts)
+            if not is_standalone_sfx(text)
+        ]
+        if kept_indices:
+            result = self.algorithms.translate(
+                [protected_texts[index] for index in kept_indices],
+                section,
+                mode=mode,
+            )
+        else:
+            result = {"translated": [], "textbox": []}
         result = _require_result_mapping(result, label="translation result")
-        raw_translated = _require_text_list(
+        kept_translated = _require_text_list(
             result.get("translated"),
             label="translation result translated",
         )
+        if len(kept_translated) != len(kept_indices):
+            raise JobConflict("translation result count does not match bubbles")
+        kept_textbox = _require_text_list(
+            result.get("textbox"),
+            label="translation result textbox",
+        )
+        if kept_textbox and len(kept_textbox) != len(kept_indices):
+            raise JobConflict("textbox translation result count does not match bubbles")
+        raw_translated = [""] * len(protected_texts)
+        raw_textbox_value: list[str] = (
+            [""] * len(protected_texts) if kept_textbox else []
+        )
+        for position, index in enumerate(kept_indices):
+            raw_translated[index] = kept_translated[position]
+            if kept_textbox:
+                raw_textbox_value[index] = kept_textbox[position]
         if len(raw_translated) != len(restore_by_index):
             raise JobConflict("translation result count does not match bubbles")
         translated = [
             _restore_non_translate_text(value, restore_by_index[index])
             for index, value in enumerate(raw_translated)
         ]
-        raw_textbox_value = result.get("textbox")
         raw_textbox = _require_text_list(
             raw_textbox_value,
             label="translation result textbox",

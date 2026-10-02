@@ -634,6 +634,8 @@ def test_core_color_adapter_accepts_serialized_dictionary_results(
 ) -> None:
     from src.core import color_extractor
 
+    # 預設改用像素量測；這裡測的是 48px 模型的轉接層
+    monkeypatch.setattr("src.shared.constants.PIXEL_TEXT_COLOR", False)
     extracted = [
         {
             "fg_color": [1, 2, 3],
