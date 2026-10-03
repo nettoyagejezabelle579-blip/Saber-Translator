@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 from src.backend_v2.desktop.settings import DesktopSettings, LOG_LEVELS, PET_SCALES
 from src.backend_v2.launcher.entrypoint import LauncherState, LauncherStatus
-from src.backend_v2.local_models import LOCAL_MODEL_OPTIONS
+from src.backend_v2.local_models import LOCAL_MODEL_OPTIONS, local_model_available
 from src.shared.user_logging import CATEGORY_LABELS, STREAM_FRAME_PREFIX, job_label
 
 
@@ -984,11 +984,19 @@ class SettingsPage(QWidget):
         self.resident_model_switches: dict[str, ToggleSwitch] = {}
         resident_rows: list[QWidget] = []
         for option in LOCAL_MODEL_OPTIONS:
-            control = ToggleSwitch(option.model_id in selected_resident_models)
+            available = local_model_available(option.model_id)
+            control = ToggleSwitch(
+                available and option.model_id in selected_resident_models
+            )
             control.setAccessibleName(f"常驻 {option.label}")
+            description = option.description
+            if not available:
+                # 此安裝沒有這個模型的檔案：停用開關，避免啟動時載入失敗
+                control.setEnabled(False)
+                description = f"{description}（此版本未內附，無法常駐）"
             self.resident_model_switches[option.model_id] = control
             resident_rows.append(
-                _setting_row(option.label, option.description, control)
+                _setting_row(option.label, description, control)
             )
         resident_card, self.resident_description = _settings_card(
             "常驻模型",
