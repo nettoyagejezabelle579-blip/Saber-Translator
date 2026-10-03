@@ -417,6 +417,18 @@ def _assemble_batch_prompt(
     return messages, len(texts)
 
 
+_REFUSAL_RE = re.compile(
+    r"(无法|無法|不能|不便|抱歉|对不起|對不起|拒绝|拒絕|违反|違反|"
+    r"I can(?:no|')t|I'm sorry|I am sorry|cannot (?:help|assist|provide))",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """短回覆且含拒絕用語（例如「你好，我无法给到相关内容。」）。"""
+    return len(text) <= 200 and bool(_REFUSAL_RE.search(text))
+
+
 def _parse_batch_response(response_text: str, expected_count: int) -> list[str]:
     """按 <|n|> 协议严格解析批量翻译响应。"""
     if not isinstance(response_text, str):
@@ -438,6 +450,12 @@ def _parse_batch_response(response_text: str, expected_count: int) -> list[str]:
     )
     markers = list(re.finditer(r"<\|(\d+)\|>", cleaned_text))
     if not markers:
+        if _looks_like_refusal(cleaned_text):
+            raise TranslationParseException(
+                "模型拒絕翻譯這一頁（內容審查）："
+                f"「{cleaned_text[:40]}」。成人內容請改用不審查的模型，"
+                "例如官方 DeepSeek（deepseek-chat）或 xAI Grok"
+            )
         raise TranslationParseException(
             "无法在响应中找到批量翻译的编号格式 <|n|>"
         )
