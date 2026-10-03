@@ -73,3 +73,27 @@ def test_release_skips_resident_models_but_still_releases_runtime_caches(
     assert released_caches == ["plugins"]
     assert result["retained"] == ["detector_yolo", "manga_ocr"]
     assert "runtime_cache_1" in result["released"]
+
+
+def test_preload_skips_missing_models_instead_of_crashing(monkeypatch) -> None:
+    def load(model_id: str) -> None:
+        if model_id == "detector_yolo":
+            raise FileNotFoundError("YSGYolo 模型文件未找到")
+
+    monkeypatch.setattr("src.backend_v2.local_models._load_local_model", load)
+
+    assert preload_local_models(["manga_ocr", "detector_yolo"]) == ("manga_ocr",)
+
+
+def test_optional_models_report_missing_weights(monkeypatch, tmp_path) -> None:
+    from src.backend_v2 import local_models
+
+    monkeypatch.setattr(
+        "src.shared.path_helpers.resource_path",
+        lambda relative: str(tmp_path / relative),
+    )
+    assert not local_models.local_model_available("detector_yolo")
+    (tmp_path / "models/yolo").mkdir(parents=True)
+    (tmp_path / "models/yolo/ysgyolo_1.2_OS1.0.pt").write_bytes(b"x")
+    assert local_models.local_model_available("detector_yolo")
+    assert local_models.local_model_available("manga_ocr")

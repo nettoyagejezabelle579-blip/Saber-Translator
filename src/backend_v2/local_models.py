@@ -120,6 +120,27 @@ _SINGLETON_RESETTERS = {
 }
 
 
+# 免安裝版為了控制檔案大小不一定內附這些模型；缺檔時介面會停用對應開關
+_OPTIONAL_MODEL_FILES = {
+    "detector_ctd": "models/ctd/comictextdetector.pt",
+    "detector_yolo": "models/yolo/ysgyolo_1.2_OS1.0.pt",
+    "paddleocr_vl": "models/paddleocr_vl_1_6/model.safetensors",
+    "litelama": "models/lama/big-lama.safetensors",
+    "lama_manga": "models/lama-manga/lama-manga.safetensors",
+}
+
+
+def local_model_available(model_id: str) -> bool:
+    """False when a model's weights are known to be missing from this install."""
+    relative = _OPTIONAL_MODEL_FILES.get(model_id)
+    if relative is None:
+        return True
+    from src.shared.path_helpers import resource_path
+    import os
+
+    return os.path.isfile(resource_path(relative))
+
+
 def normalize_resident_models(model_ids: object) -> tuple[str, ...]:
     """Validate, deduplicate, and return model ids in catalog order."""
 
@@ -149,18 +170,26 @@ def preload_local_models(model_ids: object) -> tuple[str, ...]:
 
     labels = [LOCAL_MODEL_LABELS[model_id] for model_id in resident_models]
     user_log("system", f"正在加载常驻模型｜{', '.join(labels)}")
+    loaded: list[str] = []
     for model_id in resident_models:
         try:
             _load_local_model(model_id)
         except Exception as error:
+            # 模型缺失或載入失敗時跳過，不讓整個程式無法啟動；
+            # 用到該模型時仍會照常回報錯誤。
             label = LOCAL_MODEL_LABELS[model_id]
             user_log(
-                "error",
-                f"常驻模型加载失败｜{label}｜{inline_log_text(error)}",
+                "warning",
+                f"常驻模型加载失败，已跳过｜{label}｜{inline_log_text(error)}",
             )
-            raise RuntimeError(f"常驻模型 {label} 加载失败：{error}") from error
-    user_log("system", f"常驻模型已就绪｜{', '.join(labels)}")
-    return resident_models
+            continue
+        loaded.append(model_id)
+    if loaded:
+        user_log(
+            "system",
+            f"常驻模型已就绪｜{', '.join(LOCAL_MODEL_LABELS[m] for m in loaded)}",
+        )
+    return tuple(loaded)
 
 
 def _load_local_model(model_id: str) -> None:
