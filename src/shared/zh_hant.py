@@ -106,6 +106,33 @@ def to_traditional(text: str, region: str | None = None) -> str:
     return converter.convert(text)
 
 
+# 模型偶爾把「あ」「う…」「はぁはぁ」原樣抄回來。只由這些假名組成的片段一定是語氣詞，
+# 直接換成中文讀者熟悉的寫法；含其他假名的片段（人名等）不動。
+_INTERJECTION_KANA = {
+    "あ": "啊", "い": "咿", "う": "嗚", "え": "欸", "お": "喔", "ん": "嗯",
+    "は": "哈", "ひ": "咿", "ふ": "呼", "へ": "嘿", "ほ": "齁",
+    "ぁ": "啊", "ぃ": "咿", "ぅ": "嗚", "ぇ": "欸", "ぉ": "喔",
+    "っ": "", "ー": "～",
+}
+_KANA_RUN_RE = re.compile(r"[ぁ-ゖァ-ヺー]+")
+
+
+def _to_hiragana(text: str) -> str:
+    return "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c for c in text)
+
+
+def convert_leftover_interjections(text: str) -> str:
+    """把譯文中殘留的日文語氣詞（あ、う、はぁ、んっ…）轉成中文。"""
+
+    def replace(match: re.Match) -> str:
+        run = _to_hiragana(match.group())
+        if all(c in _INTERJECTION_KANA for c in run):
+            return "".join(_INTERJECTION_KANA[c] for c in run)
+        return match.group()
+
+    return _KANA_RUN_RE.sub(replace, text)
+
+
 def postprocess_translation(text: str, environ=os.environ) -> str:
     """譯文寫入氣泡前的統一後處理。"""
     if not isinstance(text, str) or not text.strip():
@@ -113,6 +140,7 @@ def postprocess_translation(text: str, environ=os.environ) -> str:
     region = configured_region(environ)
     if not region:
         return text
+    text = convert_leftover_interjections(text)
     return normalize_punctuation(to_traditional(text, region))
 
 
@@ -127,4 +155,4 @@ def ensure_traditional_for_render(text: str, environ=os.environ) -> str:
     region = configured_region(environ)
     if not region:
         return text
-    return to_traditional(text, region)
+    return to_traditional(convert_leftover_interjections(text), region)

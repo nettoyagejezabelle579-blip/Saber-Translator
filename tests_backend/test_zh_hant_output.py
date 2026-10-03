@@ -67,3 +67,20 @@ def test_render_safety_net_converts_manual_simplified_edits():
     assert ensure_traditional_for_render("「已經……」", {}) == "「已經……」"
     assert ensure_traditional_for_render("OK!", {}) == "OK!"
     assert ensure_traditional_for_render("头发", {"SABER_ZH_HANT_REGION": "off"}) == "头发"
+
+
+def test_leftover_interjection_kana_becomes_chinese():
+    assert postprocess_translation("う、あ。。。", {}) == "嗚、啊……"
+    assert postprocess_translation("はぁはぁ", {}) == "哈啊哈啊"
+    assert postprocess_translation("好舒服…あっ♡", {}) == "好舒服……啊♡"
+
+
+def test_kana_words_that_are_not_interjections_are_left_alone():
+    assert postprocess_translation("ユキ…", {}) == "ユキ……"
+    assert postprocess_translation("ダメ", {}) == "ダメ"
+
+
+def test_render_safety_net_also_fixes_old_translations():
+    from src.shared.zh_hant import ensure_traditional_for_render
+
+    assert ensure_traditional_for_render("あっ…", {}) == "啊…"
