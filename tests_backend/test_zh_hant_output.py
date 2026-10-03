@@ -84,3 +84,18 @@ def test_render_safety_net_also_fixes_old_translations():
     from src.shared.zh_hant import ensure_traditional_for_render
 
     assert ensure_traditional_for_render("あっ…", {}) == "啊…"
+
+
+def test_user_reported_leftover_sound_words():
+    # 實際翻譯後殘留在氣泡裡的日文（使用者回報）
+    assert postprocess_translation("びゅー", {}) == "咻～"
+    assert postprocess_translation("うっ……", {}) == "嗚……"
+    assert postprocess_translation("んっ♡んん", {}) == "嗯♡嗯嗯"
+    assert postprocess_translation("びゅぅ～っ♡", {}) == "咻～♡"
+    assert postprocess_translation("ふふっ", {}) == "呵呵"
+
+
+def test_common_onomatopoeia_left_in_translation():
+    assert postprocess_translation("ドピュッ", {}) == "噗咻"
+    assert postprocess_translation("ぐちゅぐちゅ", {}) == "咕啾咕啾"
+    assert postprocess_translation("パンパンッ", {}) == "啪啪"

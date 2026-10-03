@@ -106,14 +106,28 @@ def to_traditional(text: str, region: str | None = None) -> str:
     return converter.convert(text)
 
 
-# 模型偶爾把「あ」「う…」「はぁはぁ」原樣抄回來。只由這些假名組成的片段一定是語氣詞，
-# 直接換成中文讀者熟悉的寫法；含其他假名的片段（人名等）不動。
+# 模型偶爾把「あ」「う…」「はぁはぁ」「びゅ～っ♡」原樣抄回來。
+# 只由語氣詞／常見擬音組成的假名片段一定是聲音，直接換成中文寫法；
+# 含其他假名的片段（人名、普通詞）不動。
 _INTERJECTION_KANA = {
     "あ": "啊", "い": "咿", "う": "嗚", "え": "欸", "お": "喔", "ん": "嗯",
     "は": "哈", "ひ": "咿", "ふ": "呼", "へ": "嘿", "ほ": "齁",
     "ぁ": "啊", "ぃ": "咿", "ぅ": "嗚", "ぇ": "欸", "ぉ": "喔",
     "っ": "", "ー": "～",
 }
+# 常見擬音（漢化常用寫法），比對時取最長
+_SFX_KANA = {
+    "どぴゅ": "噗咻", "ぶぴゅ": "噗咻", "びゅる": "咻嚕", "びゅ": "咻", "ぴゅ": "咻",
+    "ぐちゅ": "咕啾", "くちゅ": "咕啾", "ぬちゅ": "滋啾", "ずちゅ": "滋啾",
+    "ちゅぱ": "啾啪", "ちゅ": "啾", "じゅぷ": "啾噗", "じゅぽ": "啾啵", "じゅる": "啾嚕",
+    "ずぷ": "噗滋", "ずぶ": "噗滋", "ぬぷ": "噗", "ぐぽ": "咕啵", "ぱちゅ": "啪啾",
+    "ぱん": "啪", "ごくん": "咕嘟", "ごく": "咕嘟", "どくん": "噗通", "どき": "撲通",
+    "びくん": "抽搐", "びく": "抖", "ぶるん": "晃", "ぞく": "酥", "ぺろ": "舔",
+    "れろ": "舔", "ぎゅ": "緊", "ぷしゃ": "噗咻", "ぶしゃ": "噴", "る": "嚕",
+}
+_SFX_MAX = max(len(unit) for unit in _SFX_KANA)
+_SMALL_VOWELS = set("ぁぃぅぇぉ")
+_GIGGLE_RE = re.compile(r"^(う?)(ふ{2,})$")
 _KANA_RUN_RE = re.compile(r"[ぁ-ゖァ-ヺー]+")
 
 
@@ -121,16 +135,45 @@ def _to_hiragana(text: str) -> str:
     return "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c for c in text)
 
 
+def _convert_kana_run(run: str) -> str | None:
+    core = run.replace("っ", "").replace("ー", "")
+    giggle = _GIGGLE_RE.match(core)
+    if giggle:  # ふふっ、うふふ → 呵呵
+        return "呵" * len(giggle.group(2))
+    out: list[str] = []
+    after_sfx = False
+    index = 0
+    while index < len(run):
+        for size in range(min(_SFX_MAX, len(run) - index), 0, -1):
+            unit = run[index:index + size]
+            if unit in _SFX_KANA and not (size == 1 and unit == "る" and not after_sfx):
+                out.append(_SFX_KANA[unit])
+                after_sfx = True
+                index += size
+                break
+        else:
+            char = run[index]
+            if char not in _INTERJECTION_KANA:
+                return None
+            if char in _SMALL_VOWELS and after_sfx:
+                out.append("～")  # びゅぅ → 咻～
+            else:
+                out.append(_INTERJECTION_KANA[char])
+                if char not in "っー":
+                    after_sfx = False
+            index += 1
+    return "".join(out)
+
+
 def convert_leftover_interjections(text: str) -> str:
-    """把譯文中殘留的日文語氣詞（あ、う、はぁ、んっ…）轉成中文。"""
+    """把譯文中殘留的日文語氣詞／擬音（あ、うっ、はぁ、びゅ～っ、ふふ…）轉成中文。"""
 
     def replace(match: re.Match) -> str:
-        run = _to_hiragana(match.group())
-        if all(c in _INTERJECTION_KANA for c in run):
-            return "".join(_INTERJECTION_KANA[c] for c in run)
-        return match.group()
+        converted = _convert_kana_run(_to_hiragana(match.group()))
+        return match.group() if converted is None else converted
 
-    return _KANA_RUN_RE.sub(replace, text)
+    result = _KANA_RUN_RE.sub(replace, text)
+    return re.sub(r"[～~]{2,}", "～", result)
 
 
 def postprocess_translation(text: str, environ=os.environ) -> str:
