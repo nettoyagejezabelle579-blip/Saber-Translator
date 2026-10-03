@@ -67,3 +67,74 @@ def test_render_safety_net_converts_manual_simplified_edits():
     assert ensure_traditional_for_render("「已經……」", {}) == "「已經……」"
     assert ensure_traditional_for_render("OK!", {}) == "OK!"
     assert ensure_traditional_for_render("头发", {"SABER_ZH_HANT_REGION": "off"}) == "头发"
+
+
+def test_leftover_interjection_kana_becomes_chinese():
+    assert postprocess_translation("う、あ。。。", {}) == "嗚、啊……"
+    assert postprocess_translation("はぁはぁ", {}) == "哈啊哈啊"
+    assert postprocess_translation("好舒服…あっ♡", {}) == "好舒服……啊♡"
+
+
+def test_kana_words_that_are_not_interjections_are_left_alone():
+    assert postprocess_translation("ユキ…", {}) == "ユキ……"
+    # 譯文裡殘留的常見日文詞會換成中文
+    assert postprocess_translation("ダメ", {}) == "不行"
+
+
+def test_render_safety_net_also_fixes_old_translations():
+    from src.shared.zh_hant import ensure_traditional_for_render
+
+    assert ensure_traditional_for_render("あっ…", {}) == "啊…"
+
+
+def test_user_reported_leftover_sound_words():
+    # 實際翻譯後殘留在氣泡裡的日文（使用者回報）
+    assert postprocess_translation("びゅー", {}) == "咻～"
+    assert postprocess_translation("うっ……", {}) == "嗚……"
+    assert postprocess_translation("んっ♡んん", {}) == "嗯♡嗯嗯"
+    assert postprocess_translation("びゅぅ～っ♡", {}) == "咻～♡"
+    assert postprocess_translation("ふふっ", {}) == "呵呵"
+
+
+def test_common_onomatopoeia_left_in_translation():
+    assert postprocess_translation("ドピュッ", {}) == "噗咻"
+    assert postprocess_translation("ぐちゅぐちゅ", {}) == "咕啾咕啾"
+    assert postprocess_translation("パンパンッ", {}) == "啪啪"
+
+
+def test_more_user_reported_leftovers():
+    cases = {
+        "とぷとぷ……♡": "咕嘟咕嘟……♡",
+        "あー・・・": "啊～……",
+        "ぎゅーっ": "緊～",
+        "びゅるるる♡": "咻嚕嚕嚕♡",
+        "ぐっ……": "唔……",
+        "ぱんぱん": "啪啪",
+        "うぅ……っ": "嗚嗚……",
+        "ん～～": "嗯～",
+        "精子びゅー": "精子咻～",
+        "びゅ～～っ♡": "咻～♡",
+    }
+    for source, expected in cases.items():
+        assert postprocess_translation(source, {}) == expected, source
+
+
+def test_untranslated_lines_get_common_words_and_trailing_sounds_fixed():
+    assert postprocess_translation("中出しびゅーっ♡", {}) == "內射咻～♡"
+    assert postprocess_translation("あっ…イク…うぅ～っ♡", {}) == "啊……去了……嗚嗚～♡"
+
+
+def test_real_japanese_words_are_not_turned_into_sounds():
+    for word in ("ずるい", "ありがとう", "かぶる", "ちょっと"):
+        assert postprocess_translation(word, {}) == word
+
+
+def test_refusal_is_reported_clearly():
+    import pytest
+
+    from src.core.translation import TranslationParseException, _parse_batch_response
+
+    with pytest.raises(TranslationParseException, match="模型拒絕翻譯"):
+        _parse_batch_response("你好，我无法给到相关内容。", 4)
+    with pytest.raises(TranslationParseException, match="编号格式"):
+        _parse_batch_response("隨便一段沒有編號的文字", 4)
