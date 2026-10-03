@@ -1,7 +1,7 @@
 Saber-Translator 日漫→繁體中文（台灣／香港）・CPU 免安裝版
 ==========================================================
 
-解壓後直接使用，不需要安裝 Python、不需要下載模型。
+把所有分卷解壓到同一資料夾後直接使用，不需要安裝 Python、不需要下載模型。
 
 【開始使用】
 1. 把整個資料夾放在可寫入的位置，建議 C:\ST\Saber-Translator
@@ -26,7 +26,6 @@ Saber-Translator 日漫→繁體中文（台灣／香港）・CPU 免安裝版
 在 Saber-Translator.exe 同一資料夾建立捷徑，目標改為：
   cmd /c "set SABER_ZH_HANT_REGION=hk && start "" Saber-Translator.exe"
 
-【此版本未內附的選用模型】（為了讓下載檔小於 2GB）
-- PaddleOCR-VL、CTD 偵測器、輔助 YOLO、litelama。預設設定都用不到。
-
-詳細說明見同資料夾的 GALAXY_BOOK_ZH_HANT_GUIDE.md。
+【分卷說明】
+本程式內附全部模型，因 GitHub 單一檔案上限 2GB 而分成數個 zip（part1、part2…）。
+請下載全部分卷，並全部解壓到同一個資料夾（缺任何一個分卷，程式都可能無法正常執行）。
