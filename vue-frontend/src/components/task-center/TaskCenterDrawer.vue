@@ -275,6 +275,45 @@ function setBookFilter(value: UiSelectValue) {
   store.bookFilter = String(value)
 }
 
+// 拖放排序：只有排隊中、沒有被章節鎖卡住的任務可以拖
+const draggingId = ref<string | null>(null)
+const dropTargetId = ref<string | null>(null)
+
+function isSortable(job: V2Job): boolean {
+  return job.status === 'queued' && job.blockedReason !== 'retained_chapter_lock'
+}
+
+function onDragStart(event: DragEvent, job: V2Job): void {
+  if (!isSortable(job)) return
+  draggingId.value = job.jobId
+  event.dataTransfer?.setData('text/plain', job.jobId)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function onDragOver(event: DragEvent, job: V2Job): void {
+  if (!draggingId.value || !isSortable(job) || draggingId.value === job.jobId) return
+  event.preventDefault()
+  dropTargetId.value = job.jobId
+}
+
+function onDragLeave(job: V2Job): void {
+  if (dropTargetId.value === job.jobId) dropTargetId.value = null
+}
+
+function onDrop(event: DragEvent, job: V2Job): void {
+  event.preventDefault()
+  const moving = draggingId.value
+  draggingId.value = null
+  dropTargetId.value = null
+  if (!moving || !isSortable(job) || moving === job.jobId) return
+  void runAction(() => store.moveQueuedTo(moving, job.jobId), '任务顺序已更新')
+}
+
+function onDragEnd(): void {
+  draggingId.value = null
+  dropTargetId.value = null
+}
+
 function queuePosition(job: V2Job): number | null {
   if (job.status !== 'queued') return null
   const index = store.queue.findIndex(item => item.jobId === job.jobId)
@@ -674,7 +713,18 @@ function analysisCreated(result: V2InsightAnalysisJobAccepted) {
                     v-for="job in group.jobs"
                     :key="job.jobId"
                     class="task-job"
+                    :class="{
+                      'task-job--draggable': isSortable(job),
+                      'task-job--drop-target': dropTargetId === job.jobId,
+                    }"
                     :data-task-job-id="job.jobId"
+                    :draggable="isSortable(job)"
+                    :title="isSortable(job) ? '拖曳可調整順序' : undefined"
+                    @dragstart="onDragStart($event, job)"
+                    @dragover="onDragOver($event, job)"
+                    @dragleave="onDragLeave(job)"
+                    @drop="onDrop($event, job)"
+                    @dragend="onDragEnd"
                   >
                     <div class="task-job__top">
                       <div>
@@ -767,6 +817,14 @@ function analysisCreated(result: V2InsightAnalysisJobAccepted) {
                         @click="runAction(() => store.moveQueued(job.jobId, 1))"
                       >
                         下移
+                      </UiButton>
+                      <UiButton
+                        v-if="isSortable(job)"
+                        size="xs"
+                        variant="ghost"
+                        @click="runAction(() => store.moveQueuedTo(job.jobId, null), '任务已移到最后')"
+                      >
+                        置底
                       </UiButton>
                       <UiButton
                         v-if="job.status === 'failed' || job.status === 'completed_with_errors'"
@@ -1253,5 +1311,14 @@ function analysisCreated(result: V2InsightAnalysisJobAccepted) {
   display: grid;
   gap: 4px;
   padding-left: 18px;
+}
+
+.task-job--draggable {
+  cursor: grab;
+}
+
+.task-job--drop-target {
+  outline: 2px dashed var(--color-action-primary);
+  outline-offset: 2px;
 }
 </style>

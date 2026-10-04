@@ -200,8 +200,8 @@ watch(
       if (error instanceof ApiClientError && error.status === 423) {
         showToast(
           restored
-            ? '当前章节已被后端任务锁定，本次编辑未保存并已恢复后端版本；如需编辑，请先取消任务'
-            : `当前章节已被后端任务锁定，且重新加载页面失败：${message}`,
+            ? '翻译任务还没处理完这一页，本次编辑未保存；这一页处理完就能编辑（已翻译好的页面现在就能编辑）'
+            : `翻译任务还没处理完这一页，且重新加载页面失败：${message}`,
           'warning',
         )
         return

@@ -726,6 +726,22 @@ export const useTaskCenterStore = defineStore('taskCenter', () => {
     await runCommand(() => jobsApi.reorder(ordered))
   }
 
+  /** 拖放排序：把 jobId 移到 targetJobId 的位置（null = 移到最後）。 */
+  async function moveQueuedTo(jobId: string, targetJobId: string | null): Promise<void> {
+    const sortable = queue.value.filter(
+      job => job.status === 'queued' && job.blockedReason !== 'retained_chapter_lock'
+    )
+    const ordered = sortable.map(job => job.jobId)
+    const from = ordered.indexOf(jobId)
+    if (from < 0 || jobId === targetJobId) return
+    ordered.splice(from, 1)
+    const to = targetJobId === null ? ordered.length : ordered.indexOf(targetJobId)
+    if (to < 0) return
+    ordered.splice(to, 0, jobId)
+    if (ordered.every((id, index) => id === sortable[index]?.jobId)) return
+    await runCommand(() => jobsApi.reorder(ordered))
+  }
+
   async function setQueuePaused(paused: boolean): Promise<void> {
     const generation = lifecycleGeneration
     const result = await runCommand(() => (
@@ -788,6 +804,7 @@ export const useTaskCenterStore = defineStore('taskCenter', () => {
     loadOlderEvents,
     moveQueued,
     prioritizeQueued,
+    moveQueuedTo,
     pauseQueue: () => setQueuePaused(true),
     resumeQueue: () => setQueuePaused(false),
     cancelBatch: (batchId: string) => runCommand(() => jobsApi.cancelBatch(batchId)),

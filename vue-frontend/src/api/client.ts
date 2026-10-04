@@ -51,6 +51,8 @@ function createApiError(error: AxiosError): ApiError {
     && backendError === undefined
     && (data === '' || data === undefined || contentType.startsWith('text/plain'))
 
+  const lockMessage = response?.status === 423 ? friendlyLockMessage(backendMessage) : undefined
+
   return new ApiClientError({
     code: backendCode
       || (isCanceled ? 'request_canceled' : undefined)
@@ -58,7 +60,8 @@ function createApiError(error: AxiosError): ApiError {
       || (isDevelopmentProxyFailure ? 'proxy_connection_error' : undefined)
       || error.code
       || 'UNKNOWN_ERROR',
-    message: backendMessage
+    message: lockMessage
+      || backendMessage
       || (isCanceled ? '请求已取消' : undefined)
       || (isNetworkFailure ? '无法连接后端服务，请稍后重试' : undefined)
       || (isDevelopmentProxyFailure ? '开发代理与后端连接中断，请稍后重试' : undefined)
@@ -70,6 +73,17 @@ function createApiError(error: AxiosError): ApiError {
         ? inlineDetails
         : undefined,
   })
+}
+
+/** 翻譯任務進行中的鎖定訊息：說清楚是哪一頁被鎖、什麼時候能用。 */
+function friendlyLockMessage(message: string | undefined): string | undefined {
+  if (message === 'page is still being processed by backend work' || message === 'chapter_locked') {
+    return '翻译任务还没处理完这一页，处理完就能编辑；已翻译好的页面现在就能编辑'
+  }
+  if (message === 'chapter is reserved by backend work') {
+    return '翻译任务进行中，暂时不能新增、删除或调整页面顺序；任务完成后即可操作'
+  }
+  return undefined
 }
 
 export function isRequestCanceled(error: unknown): boolean {

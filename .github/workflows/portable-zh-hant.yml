@@ -94,6 +94,18 @@ jobs:
           python -m pip install "torch==2.11.0+cpu" "torchvision==0.26.0+cpu" --index-url "https://download.pytorch.org/whl/cpu"
           python -m pip install -r requirements-cpu.txt
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Build the web interface from source
+        working-directory: vue-frontend
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --no-audit --no-fund
+          npm run build
+          if (-not (Test-Path ..\src\backend_v2\static\vue\index.html)) { throw 'frontend build produced no index.html' }
+
       - name: Build with PyInstaller
         env:
           SABER_BUILD_MOVE_MODELS: '1'
