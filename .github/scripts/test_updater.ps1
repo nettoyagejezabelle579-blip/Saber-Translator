@@ -65,8 +65,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$full\Update-Saber.ps1" -Of
 if ($LASTEXITCODE -ne 0) { throw "full update failed ($LASTEXITCODE)" }
 Assert-Updated $full $false
 
-# 線上下載＋續傳：part1 上次已解壓完成（伺服器上沒有 part1，若重新下載就會失敗），
-# part2 只下載了一半（必須用 Range 從中斷處繼續），另一版留下的暫存資料夾要被清掉。
+# 線上下載＋續傳：舊版更新程式留下完整的 part1（放在舊位置，伺服器上沒有 part1，若重新下載就會失敗），
+# part2 只下載了一半（必須用 Range 從中斷處繼續）；舊版的 staging 與其他版本的暫存資料夾要被清掉。
 New-Item -ItemType Directory -Force -Path "$Root\multi", "$Root\served" | Out-Null
 Push-Location "$Root\multi"; python "$Repo\.github\scripts\pack_parts.py" "$Root\v2" $Prefix 60000; Pop-Location
 $partFiles = @(Get-ChildItem "$Root\multi\$Prefix-part*.zip" | Sort-Object Name)
@@ -101,10 +101,10 @@ ConvertTo-Json -Depth 5 @{ name = '繁中免安裝版 (CPU) bbb2222'; assets = (
 
 $tmp = Join-Path $Root 'tmp'
 $work = Join-Path $tmp 'saber-update\build-bbb2222'
-New-Item -ItemType Directory -Force -Path "$work\staging", "$tmp\saber-update\build-old" | Out-Null
+New-Item -ItemType Directory -Force -Path $work, "$tmp\saber-update\build-old", "$tmp\saber-update\staging\Saber-Translator" | Out-Null
 Set-Content "$tmp\saber-update\build-old\stale.zip" 'stale'
-& tar.exe -xf $partFiles[0].FullName -C "$work\staging"
-Set-Content "$work\$($partFiles[0].Name).done" 'ok'
+Set-Content "$tmp\saber-update\staging\Saber-Translator\half-extracted.txt" 'old updater leftovers'
+Copy-Item $partFiles[0].FullName "$tmp\saber-update\$($partFiles[0].Name)"
 $bytes = [IO.File]::ReadAllBytes($partFiles[1].FullName)
 $half = [int]($bytes.Length / 2)
 [IO.File]::WriteAllBytes("$work\$($partFiles[1].Name)", [byte[]]$bytes[0..($half - 1)])
@@ -123,6 +123,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "online resumed update failed ($LASTEXITCODE)" }
         Assert-Updated $online $false
         if (Test-Path "$tmp\saber-update") { throw 'download folder was not cleaned up' }
+        if (Test-Path "$online\half-extracted.txt") { throw 'old updater leftovers were installed' }
         $ranges = Get-Content "$Root\ranges.log" -ErrorAction SilentlyContinue
         if ($ranges -notcontains "$($partFiles[1].Name) $half") { throw "part2 was not resumed: $ranges" }
         powershell -NoProfile -ExecutionPolicy Bypass -File "$online\Update-Saber.ps1" -ReleaseFile "$Root\release.json"
