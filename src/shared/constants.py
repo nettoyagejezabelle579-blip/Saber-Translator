@@ -210,6 +210,9 @@ REPAIR_DESPECKLE = True
 # 去字後二次修復：清掉黏在修復區外緣的白邊、彩色描邊殘留（網點、畫面上也有效）
 REPAIR_RESIDUE_CLEANUP = True
 
+# 翻譯時附上 OCR 錯字還原規則（形近漢字、假名），讓模型依上下文修正辨識錯誤
+OCR_CORRECTION_IN_PROMPT = True
+
 # 排版方向依整頁判斷：只讓明顯細長（長寬比 ≥ DIRECTION_CONFIDENT_ASPECT）的文字行投票，
 # 接近正方形的短字（あっ、♡）跟隨整頁主要方向；整頁無法判斷時用預設（日漫直排）
 PAGE_AWARE_TEXT_DIRECTION = True

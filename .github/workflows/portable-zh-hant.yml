@@ -11,6 +11,8 @@ on:
       - 'tests_backend/**'
       - 'vue-frontend/tests/**'
       - '.github/workflows/verify-updater.yml'
+      - '.github/workflows/eval-ocr.yml'
+      - '.github/scripts/eval_ocr.py'
   workflow_dispatch:
 
 permissions:

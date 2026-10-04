@@ -51,6 +51,23 @@ class TranslationParseException(OpenAICompatibleBusinessRetryableError):
     """批量翻译响应解析失败异常，触发重试"""
 
 
+_OCR_GUIDANCE_MARKER = "## OCR 錯字還原"
+OCR_CORRECTION_GUIDANCE = _OCR_GUIDANCE_MARKER + """
+原文是 OCR 從漫畫圖片辨識出來的，常把字形相近的字認錯，翻譯前請先在心裡還原成作者原本寫的字：
+- 漢字：未/末、己/已/巳、土/士、日/曰、人/入、大/犬/太、千/干、刀/力、王/玉、休/体、輪/輸、問/間、貝/見、旅/族、微/徴、壁/璧、側/測/則。
+- 假名：へ/ヘ、り/リ、カ/力、ニ/二、ロ/口、エ/工、タ/夕、ト/卜、ハ/八、ソ/ン、シ/ツ、ー/一、っ/つ、ゃ/や、ぁ/あ，以及濁點、半濁點（は/ば/ぱ、か/が）。
+- 若字面不通順或不像日文，依上下文、常用詞彙與句型推斷正確的字再翻譯；不要照錯字硬翻，也不要輸出說明。"""
+
+
+def with_ocr_guidance(prompt: str) -> str:
+    """在翻譯提示詞後面附上 OCR 錯字還原規則（使用者自訂或舊版提示詞也適用）。"""
+    if not getattr(constants, "OCR_CORRECTION_IN_PROMPT", True) or not prompt:
+        return prompt
+    if _OCR_GUIDANCE_MARKER in prompt:
+        return prompt
+    return prompt.rstrip() + "\n\n" + OCR_CORRECTION_GUIDANCE
+
+
 def _build_text_chat_messages(prompt_content: str, text: str) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     if prompt_content:
@@ -226,7 +243,7 @@ def translate_single_text(
         if manifest.requires_base_url and not custom_base_url:
             raise ValueError(f"{manifest.display_name}需要 Base URL")
 
-        messages = _build_text_chat_messages(prompt_content, text)
+        messages = _build_text_chat_messages(with_ocr_guidance(prompt_content), text)
         if canonical_provider == "sakura":
             messages = _build_text_chat_messages(
                 "你是一个轻小说翻译模型，可以流畅通顺地以日本轻小说的风格将日文翻译成简体中文，并联系上下文正确使用人称代词，不擅自添加原文中没有的代词。",
@@ -378,7 +395,7 @@ def _assemble_batch_prompt(
             system_prompt = custom_prompt
         else:
             system_prompt = constants.BATCH_TRANSLATE_JSON_SYSTEM_TEMPLATE
-        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "system", "content": with_ocr_guidance(system_prompt)})
         # 2. Few-shot learning: JSON 格式示例
         messages.append({"role": "user", "content": constants.BATCH_TRANSLATE_JSON_SAMPLE_INPUT})
         messages.append({"role": "assistant", "content": constants.BATCH_TRANSLATE_JSON_SAMPLE_OUTPUT})
@@ -403,7 +420,7 @@ def _assemble_batch_prompt(
             system_prompt = custom_prompt
         else:
             system_prompt = constants.BATCH_TRANSLATE_SYSTEM_TEMPLATE
-        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "system", "content": with_ocr_guidance(system_prompt)})
         # 2. Few-shot learning: 添加翻译示例
         messages.append({"role": "user", "content": constants.BATCH_TRANSLATE_SAMPLE_INPUT})
         messages.append({"role": "assistant", "content": constants.BATCH_TRANSLATE_SAMPLE_OUTPUT})
