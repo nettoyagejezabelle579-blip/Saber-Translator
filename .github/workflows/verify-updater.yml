@@ -1,0 +1,106 @@
+# 用真正的 GitHub Release 實測 Update-Saber.ps1（在 GitHub 的 Windows 機器上下載，不用使用者的網路）：
+# 下載到一半強制中斷 → 搬成舊版更新程式的位置 → 再執行要續傳、套用到「舊版程式＋書籍資料」上，
+# 最後逐一核對每個檔案的 SHA-256、確認 data-v2 沒變，並實際啟動打包好的程式。
+name: Verify updater against the real release
+
+on:
+  push:
+    branches:
+      - claude/saber-translation-upgrade-ut9pti
+    paths:
+      - '.github/workflows/verify-updater.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Updater unit scenarios (Windows PowerShell 5.1)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .github/scripts/test_updater.ps1
+
+      - name: Real download, interruption, resume and install
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'D:\verify'
+          $app = Join-Path $root 'Saber-Translator'
+          New-Item -ItemType Directory -Force -Path "$app\data-v2\books", "$app\_internal" | Out-Null
+          # 模擬使用者現在的舊版：沒有 BUILD.json、有書籍資料與權杖
+          Set-Content "$app\Saber-Translator.exe" 'old program'
+          Set-Content "$app\_internal\old-library.dll" 'old dll'
+          Set-Content "$app\data-v2\library.db" 'my books and settings'
+          Set-Content "$app\data-v2\books\chapter1.png" 'page'
+          Set-Content "$app\data-v2\github-token.txt" $env:GH_TOKEN -Encoding ASCII
+          Copy-Item packaging\Update-Saber.ps1, packaging\Update-Saber.bat $app
+          $dataBefore = Get-ChildItem "$app\data-v2" -Recurse -File | Get-FileHash | ForEach-Object { $_.Hash }
+
+          $env:TEMP = 'D:\verify-temp'
+          New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+          $work = Join-Path $env:TEMP 'saber-update'
+
+          # 1) 下載到一半強制中斷（等於使用者關掉視窗）
+          $proc = Start-Process powershell -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$app\Update-Saber.ps1" -PassThru -WindowStyle Hidden
+          $partial = $null
+          for ($i = 0; $i -lt 600 -and -not $partial; $i++) {
+              Start-Sleep -Seconds 1
+              $partial = Get-ChildItem $work -Recurse -Filter '*part1.zip' -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Length -gt 300MB } | Select-Object -First 1
+          }
+          if (-not $partial) { throw 'download never started' }
+          taskkill /PID $proc.Id /T /F | Out-Null
+          Start-Sleep -Seconds 3
+          $partial = Get-Item $partial.FullName
+          Write-Host ("interrupted at {0:N0} MB" -f ($partial.Length / 1MB))
+          if (Test-Path "$app\BUILD.json") { throw 'program was changed before the download finished' }
+
+          # 2) 改成舊版更新程式留下的樣子：分卷放在 saber-update 根目錄、還有 staging
+          Move-Item $partial.FullName (Join-Path $work $partial.Name)
+          New-Item -ItemType Directory -Force -Path "$work\staging\Saber-Translator" | Out-Null
+          Set-Content "$work\staging\Saber-Translator\leftover.txt" 'old updater leftovers'
+
+          # 3) 再執行一次：要續傳並完成更新
+          cmd /c "powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$app\Update-Saber.ps1`" > `"$root\run2.log`" 2>&1"
+          $code = $LASTEXITCODE
+          Get-Content "$root\run2.log" | Where-Object { $_ -notmatch '^\s*[0-9 .%kMG:-]*$' } | Write-Host
+          if ($code -ne 0) { throw "update failed ($code)" }
+          if ((Get-Content "$root\run2.log" -Raw) -notmatch 'Resuming transfer from byte position') { throw 'the interrupted download was not resumed' }
+
+          # 4) 核對結果
+          $manifest = Get-Content "$app\build-manifest.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+          $bad = 0; $checked = 0
+          foreach ($entry in $manifest.files.PSObject.Properties) {
+              if ($entry.Name -eq 'Update-Saber.ps1') { continue }  # never replaced by an older updater
+              $path = Join-Path $app ($entry.Name -replace '/', '\')
+              $checked++
+              if (-not (Test-Path -LiteralPath $path)) { Write-Host "MISSING $($entry.Name)"; $bad++; continue }
+              if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value) { Write-Host "DIFFERENT $($entry.Name)"; $bad++ }
+          }
+          Write-Host "checked $checked files, $bad problems"
+          if ($bad -gt 0) { throw "$bad installed files do not match the release" }
+          if ((Get-Content "$app\BUILD.json" -Raw | ConvertFrom-Json).build -ne $manifest.build) { throw 'BUILD.json not updated' }
+          $dataAfter = Get-ChildItem "$app\data-v2" -Recurse -File | Get-FileHash | ForEach-Object { $_.Hash }
+          if (Compare-Object $dataBefore $dataAfter) { throw 'data-v2 changed' }
+          if (-not (Select-String -LiteralPath "$app\Update-Saber.ps1" -Pattern 'UpdaterVersion' -Quiet)) { throw 'new updater was replaced by an older one' }
+          if (Test-Path "$app\leftover.txt") { throw 'old updater leftovers were installed' }
+          if (Test-Path $work) { throw 'download folder was not cleaned up' }
+          Write-Host "Update installed correctly: build $($manifest.build), data-v2 untouched"
+
+          # 5) 再執行一次要回報已是最新，不再下載
+          cmd /c "powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -File `"$app\Update-Saber.ps1`" > `"$root\run3.log`" 2>&1"
+          if ($LASTEXITCODE -ne 0) { throw "second run failed ($LASTEXITCODE)" }
+          if ((Get-Content "$root\run3.log" -Raw) -match '% Received') { throw 'second run downloaded again instead of reporting up to date' }
+
+      - name: Start the installed program
+        run: python .github/scripts/probe_package.py D:\verify\Saber-Translator\Saber-Translator.exe
