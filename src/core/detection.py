@@ -215,6 +215,76 @@ def analyze_direction_from_textlines(textlines: List[Dict[str, Any]]) -> str:
     return most_common[0]
 
 
+def _line_shape(polygon) -> tuple[str, float, float] | None:
+    """文字行外框 → (方向, 長寬比, 長邊)。"""
+    try:
+        points = np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
+    except (TypeError, ValueError):
+        return None
+    if len(points) < 3:
+        return None
+    width = float(points[:, 0].max() - points[:, 0].min())
+    height = float(points[:, 1].max() - points[:, 1].min())
+    if width <= 0 or height <= 0:
+        return None
+    long_side, short_side = max(width, height), min(width, height)
+    return ("v" if height > width else "h"), long_side / short_side, long_side
+
+
+def decide_page_directions(
+    textlines_per_bubble: List[List[Dict[str, Any]]],
+    coords: List[Tuple[int, int, int, int]],
+    fallback_directions: List[str],
+) -> List[str]:
+    """以整頁為依據決定每個氣泡的排版方向。
+
+    單一文字行只看外框長寬：「あっ」「♡」「ッ」這種 1～2 字的直排短句外框接近正方形，
+    常被誤判成橫排，譯文就被排成橫的。這裡只讓「明顯細長」（長寬比 ≥ 門檻）的文字行投票：
+    1. 氣泡內有明顯細長的文字行 → 依長邊加權多數決（真正的橫排文字仍是橫排）。
+    2. 沒有（全是接近正方形的短字）→ 跟隨整頁的主要方向（明顯細長的文字行數多數決）；
+       整頁也無法判斷時用預設（日漫為直排）。
+    """
+    threshold = float(getattr(constants, "DIRECTION_CONFIDENT_ASPECT", 1.5))
+    default = getattr(constants, "DEFAULT_PAGE_TEXT_DIRECTION", "v")
+    bubble_votes: List[Dict[str, float]] = []
+    page_votes = {"v": 0.0, "h": 0.0}
+    for index, lines in enumerate(textlines_per_bubble):
+        votes = {"v": 0.0, "h": 0.0}
+        shapes = [_line_shape(line.get("polygon")) for line in (lines or [])]
+        if not any(shapes) and index < len(coords):
+            x1, y1, x2, y2 = coords[index]
+            shapes = [_line_shape([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])]
+        for shape in shapes:
+            if shape is None:
+                continue
+            direction, aspect, long_side = shape
+            if aspect >= threshold:
+                votes[direction] += long_side
+                # 整頁按行數計票：一條很長的橫排旁白不會壓過整頁的直排對白
+                page_votes[direction] += 1
+        bubble_votes.append(votes)
+    if page_votes["v"] > page_votes["h"]:
+        page_direction = "v"
+    elif page_votes["h"] > page_votes["v"]:
+        page_direction = "h"
+    else:
+        page_direction = default
+    decided: List[str] = []
+    for index, votes in enumerate(bubble_votes):
+        if votes["v"] > votes["h"]:
+            decided.append("v")
+        elif votes["h"] > votes["v"]:
+            decided.append("h")
+        else:
+            decided.append(page_direction)
+        if decided[-1] != fallback_directions[index]:
+            logger.debug(
+                "气泡 %d 排版方向依整页修正: %s -> %s",
+                index, fallback_directions[index], decided[-1],
+            )
+    return decided
+
+
 def get_bubble_detection_result_with_auto_directions(
     image_pil: Image.Image,
     detector_type: str = None,
@@ -311,6 +381,14 @@ def get_bubble_detection_result_with_auto_directions(
             
             result['auto_directions'].append(auto_dir)
         
+        # 排版方向依整页修正（短句、单字不再被误判成横排）
+        if result['coords'] and getattr(constants, "PAGE_AWARE_TEXT_DIRECTION", False):
+            result['auto_directions'] = decide_page_directions(
+                result['textlines_per_bubble'],
+                result['coords'],
+                result['auto_directions'],
+            )
+
         # 应用坐标扩展
         if result['coords']:
             result['coords'] = expand_coordinates(
