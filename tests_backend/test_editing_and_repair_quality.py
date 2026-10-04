@@ -102,3 +102,66 @@ def test_finished_page_is_editable_while_job_runs():
 def test_page_outside_job_is_editable_but_chapter_jobs_keep_lock():
     assert not page_reserved_by_job(_FakeConnection("j", [("p2", "running")]), "c", "p9")
     assert page_reserved_by_job(_FakeConnection("j", []), "c", "p1")
+
+
+def _fake_lama(image, mask, **_kwargs):
+    import cv2
+
+    source = np.array(image.convert("RGB"))
+    repair = (np.array(mask.convert("L")) < 128).astype(np.uint8) * 255
+    return Image.fromarray(cv2.inpaint(source, repair, 5, cv2.INPAINT_TELEA))
+
+
+def _outlined_text_scene(background, line=None):
+    from PIL import ImageDraw, ImageFont
+
+    font = ImageFont.truetype(
+        "src/backend_v2/resources/fonts/思源黑体SourceHanSansK-Bold.TTF", 64
+    )
+    image = Image.fromarray(background)
+    draw = ImageDraw.Draw(image)
+    if line is not None:
+        x, color = line
+        draw.line([(x, 0), (x, background.shape[0] - 1)], fill=color, width=4)
+    core = Image.new("L", image.size, 0)
+    core_draw = ImageDraw.Draw(core)
+    for index, char in enumerate("びゅっ"):
+        position = (110, 40 + index * 100)
+        draw.text(position, char, font=font, fill=(255, 40, 200),
+                  stroke_width=5, stroke_fill=(255, 255, 255))
+        core_draw.text(position, char, font=font, fill=255)
+    # 偵測遮罩只蓋到字身，白色描邊不在遮罩內
+    precise = np.where(np.array(core) > 0, 255, 0).astype(np.uint8)
+    return image, precise
+
+
+def _textured(height=400, width=300):
+    yy, xx = np.mgrid[0:height, 0:width]
+    base = 170 + 30 * np.sin(xx / 3.0) * np.sin(yy / 3.0)
+    return np.clip(np.stack([base, base * 0.8, base * 0.75], -1), 0, 255).astype(np.uint8)
+
+
+def test_white_outline_left_on_screentone_is_removed(monkeypatch):
+    from src.core import inpainting
+
+    monkeypatch.setattr(inpainting, "clean_image_with_lama", _fake_lama)
+    image, precise = _outlined_text_scene(_textured())
+    result = np.array(inpainting.inpaint_bubbles(
+        image, [(90, 25, 210, 345)], method="lama", precise_mask=precise,
+        mask_dilate_size=2, mask_box_expand_ratio=20, lama_model="lama_mpe",
+    ))
+    assert (result[25:345, 90:210].min(axis=2) >= 235).sum() == 0
+
+
+def test_residue_cleanup_keeps_nearby_art_lines(monkeypatch):
+    from src.core import inpainting
+
+    monkeypatch.setattr(inpainting, "clean_image_with_lama", _fake_lama)
+    background = np.full((400, 300, 3), (180, 140, 130), np.uint8)
+    image, precise = _outlined_text_scene(background, line=(102, (60, 30, 30)))
+    result = np.array(inpainting.inpaint_bubbles(
+        image, [(90, 25, 210, 345)], method="lama", precise_mask=precise,
+        mask_dilate_size=2, mask_box_expand_ratio=20, lama_model="lama_mpe",
+    )).astype(int)
+    line = result[:, 101:104]
+    assert (np.abs(line - np.array([60, 30, 30])).max(axis=2) < 40).mean() == 1.0

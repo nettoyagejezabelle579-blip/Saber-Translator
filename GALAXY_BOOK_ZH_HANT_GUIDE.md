@@ -110,6 +110,8 @@ Chinese on a laptop with no dedicated GPU (Samsung Galaxy Book3 Pro, Intel 13th-
 - 三個 LaMa 模型中，**「LAMA（漫畫）」`lama_manga`** 專為漫畫訓練，網點與線條的修復通常最好（預設）；
   「LAMA（速度优化）」`lama_mpe` 較快但細節較差。
 
+- **描邊殘留二次修復**：去字後若字的白邊、彩色描邊還留在網點或畫面上，會自動把殘留併入範圍、
+  從原圖重新修復一次；氣泡外框與畫面線條會延伸出去，不會被誤刪（`REPAIR_RESIDUE_CLEANUP`）。
 - **殘點清除**：去字後，在白色／淺色氣泡內、文字周圍殘留的灰點、彩色點、白點會自動填成底色；
   氣泡外框和畫面圖案不受影響（`REPAIR_DESPECKLE`）。
 - **遮罩隨解析度放大**：大圖或放大後的頁面，去字範圍會按比例加寬，文字的抗鋸齒邊和白色描邊也會蓋掉
@@ -133,3 +135,9 @@ Chinese on a laptop with no dedicated GPU (Samsung Galaxy Book3 Pro, Intel 13th-
 - 建議接上電源並使用 Samsung Settings 的「高效能」模式。
 
 所有開關都在 `src/shared/constants.py`。
+
+## 更新程式（保留書籍與設定）
+
+雙擊程式資料夾裡的 `Update-Saber.bat`：自動檢查 GitHub 上的新版，通常只下載小型更新包，
+只替換程式檔案；`data-v2`（書籍、翻譯結果、設定、API Key、術語表）完全不會被改動。
+私人倉庫第一次需要貼上唯讀存取權杖（詳見 README_FIRST.txt）。
