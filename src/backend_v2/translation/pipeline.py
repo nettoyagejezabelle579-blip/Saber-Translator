@@ -63,6 +63,8 @@ from src.shared.user_logging import (
 
 
 LOGGER = logging.getLogger("saber.worker.translation")
+# 每頁最多對幾個「譯文仍是日文」的氣泡逐一重翻（避免拒絕翻譯的模型浪費太多請求）
+MAX_LEFTOVER_RETRANSLATIONS = 6
 
 
 def _step_page_number(step: Mapping[str, Any]) -> int | None:
@@ -2284,7 +2286,10 @@ class TranslationPipelineService:
             payload["autoBgColor"] = background
             payload["colorConfidence"] = color["confidence"]
             if uses_auto_color and foreground is not None:
+                from src.core.text_color import contrast_stroke_color
+
                 payload["textColor"] = rgb_to_hex(foreground)
+                payload["strokeColor"] = contrast_stroke_color(foreground)
             if uses_auto_color and background is not None:
                 payload["fillColor"] = rgb_to_hex(background)
         checkpoint = self._publish_bubble_update(
@@ -2609,6 +2614,12 @@ class TranslationPipelineService:
         )
         if len(kept_translated) != len(kept_indices):
             raise JobConflict("translation result count does not match bubbles")
+        kept_translated = self._retranslate_leftover_japanese(
+            list(kept_translated),
+            [protected_texts[index] for index in kept_indices],
+            section,
+            mode,
+        )
         kept_textbox = _require_text_list(
             result.get("textbox"),
             label="translation result textbox",
@@ -2699,6 +2710,43 @@ class TranslationPipelineService:
                 details=[json.dumps(value, ensure_ascii=False) for value in warnings],
             )
         return checkpoint
+
+    def _retranslate_leftover_japanese(
+        self,
+        translated: list[str],
+        sources: list[str],
+        section: Mapping[str, Any],
+        mode: str,
+    ) -> list[str]:
+        """譯文仍留有日文的氣泡（模型整句沒翻）逐一再翻一次；失敗就保留原結果。"""
+        from src.shared.zh_hant import has_untranslated_japanese
+
+        pending = [
+            index
+            for index, value in enumerate(translated)
+            if has_untranslated_japanese(value)
+        ][:MAX_LEFTOVER_RETRANSLATIONS]
+        for index in pending:
+            try:
+                retry = self.algorithms.translate([sources[index]], section, mode=mode)
+                values = retry.get("translated") if isinstance(retry, Mapping) else None
+            except Exception as error:  # 拒絕翻譯、網路錯誤等：保留第一次的結果
+                user_log(
+                    "warning",
+                    f"氣泡 {index + 1} 的譯文仍有日文，重新翻譯失敗：{inline_log_text(str(error))}",
+                )
+                continue
+            if (
+                isinstance(values, list)
+                and len(values) == 1
+                and isinstance(values[0], str)
+                and values[0].strip()
+                and not has_untranslated_japanese(values[0])
+            ):
+                translated[index] = values[0]
+            else:
+                user_log("warning", f"氣泡 {index + 1} 的譯文仍有日文，重新翻譯後仍未完全翻譯")
+        return translated
 
     def _repair(
         self,

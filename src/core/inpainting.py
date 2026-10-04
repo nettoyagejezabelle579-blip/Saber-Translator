@@ -104,6 +104,51 @@ def _bubble_region_mask(shape, coords, polygon):
     return region.astype(bool)
 
 
+def _residue_mask(result, repaired_mask):
+    """找出去字後黏在修復區外緣的殘留（白邊、彩色描邊、抗鋸齒灰邊）。
+
+    做法：修復區外圍一圈（band）裡、和更外圍背景（outer）明顯不同的像素視為殘留；
+    但只保留完全落在 band 內、並貼著修復區的色塊——氣泡外框、畫面線條會延伸到
+    outer，不會被誤刪。回傳 bool 遮罩；沒有殘留時回傳 None。
+    """
+    height, width = repaired_mask.shape
+    band = max(4, round(max(height, width) / 250))
+    mask_u8 = repaired_mask.astype(np.uint8)
+    near = cv2.dilate(mask_u8, cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * band + 1, 2 * band + 1))) > 0
+    far = cv2.dilate(mask_u8, cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (6 * band + 1, 6 * band + 1))) > 0
+    touching = cv2.dilate(mask_u8, np.ones((3, 3), np.uint8)) > 0
+    ring = near & ~repaired_mask
+    outer = far & ~near
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(far.astype(np.uint8), 8)
+    residue = np.zeros_like(repaired_mask)
+    for label in range(1, count):
+        x, y, w, h, _area = stats[label]
+        region = labels[y:y + h, x:x + w] == label
+        crop = result[y:y + h, x:x + w].astype(np.int16)
+        crop_outer = outer[y:y + h, x:x + w] & region
+        crop_ring = ring[y:y + h, x:x + w] & region
+        if crop_outer.sum() < 30 or not crop_ring.any():
+            continue
+        reference = np.median(crop[crop_outer], axis=0)
+        distance = np.abs(crop - reference).max(axis=2)
+        threshold = max(40.0, float(np.percentile(distance[crop_outer], 95)) + 25.0)
+        outlier = ((distance > threshold) & (crop_ring | crop_outer)).astype(np.uint8)
+        blobs, blob_labels = cv2.connectedComponents(outlier, connectivity=8)
+        if blobs <= 1:
+            continue
+        reaches_outer = set(np.unique(blob_labels[crop_outer & (outlier > 0)]).tolist())
+        hugs_text = set(np.unique(blob_labels[touching[y:y + h, x:x + w] & (outlier > 0)]).tolist())
+        keep = [b for b in range(1, blobs) if b in hugs_text and b not in reaches_outer]
+        if keep:
+            residue[y:y + h, x:x + w] |= np.isin(blob_labels, keep)
+    if not residue.any():
+        return None
+    residue = cv2.dilate(residue.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    return residue & ~repaired_mask & near
+
+
 def _despeckle_flat_regions(result_img, repaired_mask):
     """去字後殘留的小點清除。
 
@@ -131,8 +176,8 @@ def _despeckle_flat_regions(result_img, repaired_mask):
             continue
         background = np.median(pixels, axis=0)
         distance = np.abs(pixels - background).max(axis=1)
-        # 至少 90% 像素接近底色才算純色區域
-        if float((distance <= 24).mean()) < 0.9:
+        # 至少 80% 像素接近底色才算純色區域（殘點多時也能清）
+        if float((distance <= 24).mean()) < 0.8:
             continue
         outlier = np.zeros(region.shape, np.uint8)
         outlier[region] = (distance > 24).astype(np.uint8)
@@ -449,6 +494,28 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
                 raise RuntimeError("LaMA 修复未返回图像")
             if result_img.size != image_pil.size:
                 raise RuntimeError("LaMA 修复结果尺寸与输入图像不一致")
+            if getattr(constants, "REPAIR_RESIDUE_CLEANUP", False):
+                residue = _residue_mask(np.array(result_img.convert("RGB")), bubble_mask_np < 128)
+                if residue is not None:
+                    # 第一次修復會把外緣的白邊顏色帶進字的位置；把殘留併入遮罩，
+                    # 從原圖重新修復，讓填色取自真正的背景
+                    logger.debug("去字殘留二次修復：%d px", int(residue.sum()))
+                    expanded = np.where((bubble_mask_np < 128) | residue, 0, 255).astype(np.uint8)
+                    residue_mask_pil = Image.fromarray(expanded)
+                    try:
+                        second = clean_image_with_lama(
+                            image_pil,
+                            residue_mask_pil,
+                            lama_model=lama_model,
+                            disable_resize=disable_resize,
+                            regional_inpainting=regional_inpainting,
+                        )
+                    finally:
+                        residue_mask_pil.close()
+                    bubble_mask_np = expanded
+                    if isinstance(second, Image.Image) and second.size == result_img.size:
+                        result_img.close()
+                        result_img = second
             if getattr(constants, "REPAIR_DESPECKLE", False):
                 cleaned = _despeckle_flat_regions(result_img, bubble_mask_np < 128)
                 if cleaned is not None:

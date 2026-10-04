@@ -47,6 +47,19 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Test the in-place updater
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .github/scripts/test_updater.ps1
+
+      - name: Fetch previous build manifest (for the incremental update)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          New-Item -ItemType Directory -Force -Path prev | Out-Null
+          gh release download $env:RELEASE_TAG --pattern build-manifest.json --dir prev 2>$null
+          if (Test-Path prev\build-manifest.json) { Write-Host 'previous manifest found' } else { Write-Host 'no previous manifest (first incremental-capable build)' }
+          exit 0
+
       - name: Download offline models (upstream models-storage release)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,10 +110,17 @@ jobs:
         run: |
           Copy-Item GALAXY_BOOK_ZH_HANT_GUIDE.md dist\Saber-Translator\
           Copy-Item packaging\README_FIRST.txt dist\Saber-Translator\
+          Copy-Item packaging\Update-Saber.ps1, packaging\Update-Saber.bat dist\Saber-Translator\
           $longest = Get-ChildItem dist\Saber-Translator -Recurse -File |
             ForEach-Object { $_.FullName.Substring((Resolve-Path dist).Path.Length + 1).Length } |
             Measure-Object -Maximum
           Write-Host "Longest path inside the package: $($longest.Maximum) characters"
+
+      - name: Write build info and incremental update
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $build = $env:GITHUB_SHA.Substring(0, 7)
+          python .github/scripts/make_update.py dist $build $env:PACKAGE_NAME prev/build-manifest.json $env:PART_LIMIT_BYTES
 
       - name: Create zip parts
         run: |
@@ -121,6 +141,8 @@ jobs:
           $sha = $env:GITHUB_SHA.Substring(0, 7)
           $parts = @(Get-ChildItem "$env:PACKAGE_NAME-part*.zip" | Sort-Object Name | ForEach-Object { $_.Name })
           $partCount = $parts.Count
+          $extra = @('build-manifest.json')
+          if (Test-Path "$env:PACKAGE_NAME-update.zip") { $extra += @("$env:PACKAGE_NAME-update.zip", 'update-info.json') }
           $notes = @"
           日漫→繁體中文（台灣／香港）CPU 免安裝版，建置自 $sha。
 
@@ -132,7 +154,10 @@ jobs:
           3. 雙擊 Saber-Translator\Saber-Translator.exe（出現 SmartScreen 時按「其他資訊」→「仍要執行」）。
           4. 在「設定 → 翻译服务」貼上 DeepSeek API Key。
 
+          已經安裝過的人：不用重新下載，雙擊程式資料夾裡的 Update-Saber.bat 即可更新，
+          書籍、設定、API Key、術語表（data-v2）都會保留。
+
           詳見資料夾內的 README_FIRST.txt。
           "@
           $notes | Set-Content -Encoding utf8 notes.md
-          gh release create $env:RELEASE_TAG @parts "$env:PACKAGE_NAME.sha256" --target $env:GITHUB_SHA --title "繁中免安裝版 (CPU) $sha" --notes-file notes.md --prerelease
+          gh release create $env:RELEASE_TAG @parts @extra "$env:PACKAGE_NAME.sha256" --target $env:GITHUB_SHA --title "繁中免安裝版 (CPU) $sha" --notes-file notes.md --prerelease

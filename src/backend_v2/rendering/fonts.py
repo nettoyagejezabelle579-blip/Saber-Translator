@@ -103,7 +103,10 @@ def materialize_render_payloads(
                 "textColor" in initialize_auto_fields
                 and persisted["autoFgColor"] is not None
             ):
+                from src.core.text_color import contrast_stroke_color
+
                 persisted["textColor"] = rgb_to_hex(persisted["autoFgColor"])
+                persisted["strokeColor"] = contrast_stroke_color(persisted["autoFgColor"])
             if (
                 "fillColor" in initialize_auto_fields
                 and persisted["autoBgColor"] is not None

@@ -53,6 +53,42 @@ def _vertical_line(x1, y1, x2, y2):
     return {"polygon": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]], "direction": "v", "confidence": 1.0}
 
 
+def _draw_column(bg, fill, stroke, stroke_width, size=60):
+    from PIL import ImageDraw, ImageFont
+
+    font = ImageFont.truetype(
+        "src/backend_v2/resources/fonts/思源黑体SourceHanSansK-Bold.TTF", size
+    )
+    image = Image.new("RGB", (220, 420), bg)
+    draw = ImageDraw.Draw(image)
+    for index, char in enumerate("びゅっ"):
+        draw.text((80, 40 + index * 90), char, font=font, fill=fill,
+                  stroke_width=stroke_width, stroke_fill=stroke)
+    return np.asarray(image)
+
+
+@pytest.mark.parametrize(("bg", "fill", "stroke", "width"), [
+    ((209, 149, 134), (255, 36, 255), (255, 255, 255), 6),   # 粉紅字＋白邊，膚色背景
+    ((209, 149, 134), (140, 40, 200), (255, 255, 255), 6),   # 紫字＋白邊
+    ((40, 40, 40), (255, 255, 255), (0, 0, 0), 5),           # 白字＋黑邊，暗背景
+    ((255, 255, 255), (200, 30, 60), (255, 255, 255), 0),    # 紅字，白底
+])
+def test_outlined_colored_text_reports_fill_not_outline(bg, fill, stroke, width):
+    from src.core.text_color import measure_bubble_color
+
+    image = _draw_column(bg, fill, stroke, width)
+    line = _vertical_line(70, 30, 150, 330)
+    assert measure_bubble_color(image, (60, 20, 160, 340), [line])["fg_color"] == list(fill)
+
+
+def test_light_text_gets_dark_outline():
+    from src.core.text_color import contrast_stroke_color
+
+    assert contrast_stroke_color([255, 255, 255]) == "#000000"
+    assert contrast_stroke_color([255, 36, 255]) == "#FFFFFF"
+    assert contrast_stroke_color([0, 0, 0]) == "#FFFFFF"
+
+
 def test_text_color_is_measured_from_pixels():
     from src.core.text_color import measure_bubble_color
 
@@ -78,11 +114,36 @@ def test_source_font_size_caps_auto_size():
     from src.core.rendering import calculate_auto_font_size, estimate_source_font_size
 
     lines = [_vertical_line(100, 0, 140, 300), _vertical_line(50, 0, 90, 300)]
-    assert estimate_source_font_size(lines) == 34
+    # 文字行寬 40 → 原文字號 40；譯文以原文字號為目標，不會被填滿整個框而變大
+    assert estimate_source_font_size(lines) == 40
     free = calculate_auto_font_size("短句", 300, 300, "vertical")
     matched = calculate_auto_font_size("短句", 300, 300, "vertical", textlines=lines)
-    assert free > 34
-    assert matched == 34
+    assert free > 40
+    assert matched == 40
+
+
+def test_auto_size_keeps_original_size_for_typical_bubbles():
+    from src.core.rendering import calculate_auto_font_size
+
+    # 原文 3 列、字號 40：中文譯文多一列也維持原文大小（允許向氣泡留白溢出 30%）
+    lines = [_vertical_line(100, 10, 140, 330), _vertical_line(55, 10, 95, 300),
+             _vertical_line(10, 10, 50, 250)]
+    for text in ("要、要被吸出來了……", "尿道裡殘留的也全部被吸出來了……", "咻～"):
+        assert calculate_auto_font_size(text, 140, 330, "vertical", textlines=lines) == 40
+
+
+def test_large_text_is_not_capped_at_80px():
+    from src.core.rendering import calculate_auto_font_size
+
+    big = [_vertical_line(0, 0, 110, 500)]
+    assert calculate_auto_font_size("咻～♡", 120, 520, "vertical", textlines=big) == 110
+
+
+def test_horizontal_fit_uses_width_for_characters_per_line():
+    from src.core.rendering import calculate_auto_font_size
+
+    # 寬 400、高 60 的橫排框：一行 10 字 → 約 38px，而不是被當成直排算得很小
+    assert calculate_auto_font_size("一二三四五六七八九十", 400, 60, "horizontal") >= 36
 
 
 def test_source_size_never_forces_overflow():

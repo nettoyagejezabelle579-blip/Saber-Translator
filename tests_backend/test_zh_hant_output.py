@@ -138,3 +138,43 @@ def test_refusal_is_reported_clearly():
         _parse_batch_response("你好，我无法给到相关内容。", 4)
     with pytest.raises(TranslationParseException, match="编号格式"):
         _parse_batch_response("隨便一段沒有編號的文字", 4)
+
+
+def test_untranslated_sentences_are_left_whole_and_flagged_for_retry():
+    from src.shared.zh_hant import has_untranslated_japanese
+
+    for sentence in (
+        "頬肉と舌がにゅるにゆる動くっ",
+        "ちんちんのゾワゾワやばいこんなのすぐイっちゃう．．．ッ",
+    ):
+        # 不逐段亂轉（不會出現「動唔」「すぐ要去了」），而是整句交給重新翻譯
+        assert postprocess_translation(sentence, {}).startswith(sentence[:4])
+        assert has_untranslated_japanese(sentence)
+    assert not has_untranslated_japanese("臉頰的肉和舌頭滑溜溜地蠕動著")
+    assert not has_untranslated_japanese("ユキ…")
+    assert not has_untranslated_japanese("內射咻～♡")
+
+
+def test_pipeline_retranslates_bubbles_left_in_japanese():
+    from types import SimpleNamespace
+
+    from src.backend_v2.translation.pipeline import TranslationPipelineService
+
+    calls = []
+
+    def translate(texts, section, mode):
+        calls.append(list(texts))
+        if texts == ["拒絕"]:
+            raise RuntimeError("模型拒絕翻譯這一頁")
+        return {"translated": ["臉頰的肉和舌頭滑溜溜地蠕動著"], "textbox": []}
+
+    service = SimpleNamespace(algorithms=SimpleNamespace(translate=translate))
+    result = TranslationPipelineService._retranslate_leftover_japanese(
+        service,
+        ["好舒服", "頬肉と舌がにゅるにゆる動くっ", "まだ日本語のまま"],
+        ["原文1", "原文2", "拒絕"],
+        {},
+        "batch",
+    )
+    assert result == ["好舒服", "臉頰的肉和舌頭滑溜溜地蠕動著", "まだ日本語のまま"]
+    assert calls == [["原文2"], ["拒絕"]]

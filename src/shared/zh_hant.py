@@ -193,9 +193,31 @@ def _has_sfx_unit(run: str) -> bool:
     return any(unit in run for unit in _SFX_KANA if len(unit) >= 2)
 
 
-def convert_leftover_interjections(text: str) -> str:
-    """把譯文中殘留的日文語氣詞／擬音（あ、うっ、はぁ、びゅ～っ、ふふ…）轉成中文。"""
-    if not _KANA_PRESENT_RE.search(text):
+# 平假名夾在兩個漢字之間（肉と舌、気が付く）＝整句日文沒翻，不能逐段亂轉
+_JAPANESE_SENTENCE_RE = re.compile(r"[一-鿿][ぁ-ゖ]+[一-鿿]")
+_IDEOGRAPH_RE = re.compile(r"[一-鿿]")
+
+
+def looks_like_untranslated_japanese(text: str) -> bool:
+    return bool(_JAPANESE_SENTENCE_RE.search(text))
+
+
+_HIRAGANA_RE = re.compile(r"[ぁ-ゖ]")
+
+
+def has_untranslated_japanese(text: str) -> bool:
+    """後處理之後仍留有 2 個以上平假名＝這個氣泡沒翻好，需要重新翻譯。
+
+    只看平假名：保留片假名的人名（ユキ）不算漏翻。
+    """
+    if not isinstance(text, str):
+        return False
+    cleaned = convert_leftover_interjections(text)
+    return len(_HIRAGANA_RE.findall(cleaned)) >= 2
+
+
+def _convert_leftovers(text: str) -> str:
+    if not _KANA_PRESENT_RE.search(text) or looks_like_untranslated_japanese(text):
         return text
     # 模型整句沒翻時，先換掉最常見的日文詞（中出し、イク、気持ちいい…）
     text = _LEFTOVER_RE.sub(lambda match: _LEFTOVER_PHRASES[match.group()], text)
@@ -203,6 +225,9 @@ def convert_leftover_interjections(text: str) -> str:
     def replace(match: re.Match) -> str:
         original = match.group()
         run = _to_hiragana(original)
+        before = match.string[match.start() - 1] if match.start() > 0 else ""
+        if _IDEOGRAPH_RE.match(before) and not _has_sfx_unit(run):
+            return original  # 動く、行く：漢字後面的假名是詞尾，不是語氣詞
         converted = _convert_kana_run(run)
         if converted is not None:
             return converted
@@ -217,6 +242,18 @@ def convert_leftover_interjections(text: str) -> str:
 
     result = _KANA_RUN_RE.sub(replace, text)
     return re.sub(r"[～~]{2,}", "～", result)
+
+
+def convert_leftover_interjections(text: str) -> str:
+    """把譯文中殘留的日文語氣詞／擬音（あ、うっ、はぁ、びゅ～っ、ふふ…）轉成中文。
+
+    轉換後若仍剩 3 個以上假名，代表這是整句沒翻的日文：保持原樣交給重新翻譯，
+    避免產生「…こんなのすぐ要去了」這種半日半中的句子。
+    """
+    converted = _convert_leftovers(text)
+    if len(_KANA_PRESENT_RE.findall(converted)) >= 3:
+        return text
+    return converted
 
 
 def postprocess_translation(text: str, environ=os.environ) -> str:
