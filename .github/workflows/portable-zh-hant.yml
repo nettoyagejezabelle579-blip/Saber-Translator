@@ -10,6 +10,7 @@ on:
       - '**.md'
       - 'tests_backend/**'
       - 'vue-frontend/tests/**'
+      - '.github/workflows/verify-updater.yml'
   workflow_dispatch:
 
 permissions:
