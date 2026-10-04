@@ -1,5 +1,5 @@
 # 量測 MangaOCR 在難辨識字型上的準確率（原本 vs. 加強版），不會發布任何東西。
-# Triggered by pushes that change only this file.
+# Triggered by pushes that change only this file. (run 2: per-view analysis)
 name: Evaluate OCR accuracy
 
 on:
@@ -28,7 +28,7 @@ jobs:
           python -m pip install "torch==2.11.0" --index-url https://download.pytorch.org/whl/cpu
           python -m pip install "transformers==5.15.0" "manga-ocr==0.1.16" numpy pillow
       - name: Evaluate
-        run: python .github/scripts/eval_ocr.py fonts --save-dir samples
+        run: python .github/scripts/eval_ocr.py fonts --save-dir samples --views
       - uses: actions/upload-artifact@v4
         if: always()
         with:
