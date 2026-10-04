@@ -2124,7 +2124,7 @@ class ContentRepository:
             if "fontSize" in propagation and bool(
                 current_style["autoFontSize"]
             ):
-                from src.core.rendering import calculate_auto_font_size
+                from src.core.rendering import calculate_auto_font_size, overflow_room
             for mutation in mutations:
                 operation = str(mutation["op"])
                 client_mutation_id = str(mutation["clientMutationId"])
@@ -2214,6 +2214,10 @@ class ContentRepository:
                     "blockAlign",
                     "fontSize",
                 )
+                page_boxes = [
+                    dict(document["payload"]).get("coords")  # type: ignore[arg-type]
+                    for document in documents.values()
+                ]
                 for document in documents.values():
                     payload = dict(document["payload"])  # type: ignore[arg-type]
                     for field in propagation_order:
@@ -2288,6 +2292,11 @@ class ContentRepository:
                                         payload["textDirection"],
                                         font_path,
                                         textlines=payload.get("textlines"),
+                                        max_overflow=overflow_room(
+                                            coords,
+                                            [box for box in page_boxes if isinstance(box, list) and len(box) == 4],
+                                            payload["textDirection"],
+                                        ),
                                     )
                                     if payload["fontSize"] != calculated:
                                         renderable_change = True

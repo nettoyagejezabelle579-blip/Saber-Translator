@@ -91,3 +91,40 @@ def test_detection_result_uses_page_directions(monkeypatch):
     monkeypatch.setattr(constants, "PAGE_AWARE_TEXT_DIRECTION", False)
     result = detection.get_bubble_detection_result_with_auto_directions(image, detector_type="default")
     assert result["auto_directions"][1] == "h"
+
+
+# --- 譯文不能溢出到其他氣泡 ---
+
+def test_text_may_overflow_into_empty_space():
+    from src.core.rendering import AUTO_FONT_OVERFLOW, overflow_room
+
+    assert overflow_room((100, 100, 160, 300), [], "vertical") == AUTO_FONT_OVERFLOW
+
+
+def test_overflow_stops_at_the_neighbouring_bubble():
+    from src.core.rendering import overflow_room
+
+    # 右邊 10px 外就是另一個氣泡（上下有重疊）：只能多用約 2*(10-4)/60
+    room = overflow_room((100, 100, 160, 300), [(170, 120, 230, 280)], "vertical")
+    assert 1.0 < room < 1.25
+    # 互相重疊的框：完全不能溢出
+    assert overflow_room((100, 100, 160, 300), [(150, 100, 210, 300)], "vertical") == 1.0
+
+
+def test_bubbles_above_or_below_do_not_limit_vertical_columns():
+    from src.core.rendering import AUTO_FONT_OVERFLOW, overflow_room
+
+    # 直排列數往左右長，上方的氣泡不影響
+    assert overflow_room((100, 100, 160, 300), [(100, 0, 160, 95)], "vertical") == AUTO_FONT_OVERFLOW
+    # 橫排則相反：上方的氣泡會限制行數
+    assert overflow_room((100, 100, 300, 160), [(100, 90, 300, 95)], "horizontal") < 1.05
+
+
+def test_crowded_bubble_gets_smaller_font_instead_of_overlapping():
+    from src.core.rendering import calculate_auto_font_size
+
+    text = "這是一段比較長的中文譯文需要好幾列"
+    lines = [{"polygon": [[100, 100], [130, 100], [130, 300], [100, 300]]}]
+    free = calculate_auto_font_size(text, 60, 200, "vertical", textlines=lines)
+    crowded = calculate_auto_font_size(text, 60, 200, "vertical", textlines=lines, max_overflow=1.0)
+    assert crowded <= free

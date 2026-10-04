@@ -698,9 +698,51 @@ def estimate_source_font_size(textlines) -> int | None:
     return int(round(float(np.percentile(sizes, 75)) * SOURCE_FONT_SIZE_SCALE))
 
 
+def overflow_room(coords, other_coords, text_direction='vertical') -> float:
+    """譯文可以向兩側溢出多少倍而不碰到其他氣泡（置中排版，兩側平均）。
+
+    直排的列數往左右延伸，只看上下範圍有重疊、位在左右兩側的氣泡；橫排則看上下。
+    回傳 1.0（不能溢出）到 AUTO_FONT_OVERFLOW 之間。
+    """
+    x1, y1, x2, y2 = (float(v) for v in coords)
+    vertical = text_direction != 'horizontal'
+    size = (x2 - x1) if vertical else (y2 - y1)
+    if size <= 0:
+        return 1.0
+    gap = math.inf
+    for other in other_coords or []:
+        ox1, oy1, ox2, oy2 = (float(v) for v in other)
+        if (ox1, oy1, ox2, oy2) == (x1, y1, x2, y2):
+            continue
+        if vertical:
+            if oy2 <= y1 or oy1 >= y2:
+                continue  # 上下沒有重疊，列再寬也碰不到
+            if ox2 <= x1:
+                gap = min(gap, x1 - ox2)
+            elif ox1 >= x2:
+                gap = min(gap, ox1 - x2)
+            else:
+                gap = 0.0
+        else:
+            if ox2 <= x1 or ox1 >= x2:
+                continue
+            if oy2 <= y1:
+                gap = min(gap, y1 - oy2)
+            elif oy1 >= y2:
+                gap = min(gap, oy1 - y2)
+            else:
+                gap = 0.0
+    if gap == math.inf:
+        return AUTO_FONT_OVERFLOW
+    # 留一點空隙，不讓兩個氣泡的字貼在一起
+    usable = max(0.0, gap - 4.0)
+    return max(1.0, min(AUTO_FONT_OVERFLOW, 1.0 + 2.0 * usable / size))
+
+
 def calculate_auto_font_size(text, bubble_width, bubble_height, text_direction='vertical',
                              font_family_relative_path=constants.DEFAULT_FONT_RELATIVE_PATH,
-                             min_size=12, max_size=160, padding_ratio=1.0, textlines=None):
+                             min_size=12, max_size=160, padding_ratio=1.0, textlines=None,
+                             max_overflow=None):
     """
     使用二分法计算最佳字体大小。
 
@@ -717,7 +759,7 @@ def calculate_auto_font_size(text, bubble_width, bubble_height, text_direction='
         source_size = estimate_source_font_size(textlines)
         if source_size is not None:
             max_size = max(min_size, source_size)
-            overflow = AUTO_FONT_OVERFLOW
+            overflow = AUTO_FONT_OVERFLOW if max_overflow is None else max(1.0, min(AUTO_FONT_OVERFLOW, max_overflow))
 
     width = bubble_width * padding_ratio
     height = bubble_height * padding_ratio

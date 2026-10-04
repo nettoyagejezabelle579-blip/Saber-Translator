@@ -48,7 +48,7 @@ def materialize_render_payloads(
     font_id_override: str | None = None,
 ) -> list[tuple[str, dict[str, object], dict[str, object]]]:
     if "fontSize" in initialize_auto_fields:
-        from src.core.rendering import calculate_auto_font_size
+        from src.core.rendering import calculate_auto_font_size, overflow_room
 
     page = connection.execute(
         select(
@@ -75,6 +75,9 @@ def materialize_render_payloads(
         ),
         partial=False,
     )
+    # 所有氣泡的範圍：譯文溢出時不能蓋到其他氣泡
+    page_boxes = [json.loads(row["payload_json"]).get("coords") for row in rows]
+    page_boxes = [box for box in page_boxes if isinstance(box, list) and len(box) == 4]
     result = []
     for row in rows:
         persisted = validate_bubble_payload(
@@ -124,6 +127,7 @@ def materialize_render_payloads(
                 persisted["textDirection"],
                 font_path,
                 textlines=persisted.get("textlines"),
+                max_overflow=overflow_room(coords, page_boxes, persisted["textDirection"]),
             )
         persisted = validate_bubble_payload(persisted, render=False)
         render_payload = validate_bubble_payload(
