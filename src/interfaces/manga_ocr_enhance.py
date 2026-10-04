@@ -136,26 +136,30 @@ def candidate_views(image: Image.Image) -> list[tuple[str, Image.Image]]:
     return views
 
 
+# 依合成漫畫字評測（13 種字型、5 種情況、468 句）選出：只加入這三種重讀圖，
+# 字元錯誤率 2.2% → 1.73%；加粗／留白／beam search 會產生「很有把握但錯」的結果，反而變差。
+DEFAULT_RETRY_VIEWS = ("contrast", "binary", "square")
+
+
 def best_reading(
     ocr,
     image: Image.Image,
     *,
-    confident_score: float = -0.12,
-    beams: int = 4,
-    max_views: int = 6,
+    confident_score: float = -0.05,
+    views: tuple[str, ...] = DEFAULT_RETRY_VIEWS,
+    beams: int = 0,
 ) -> Reading:
-    """Read once; if not confident, re-read cleaned views (and with beam search), keep the best."""
+    """Read once; if not confident, re-read the chosen cleaned views and keep the most confident."""
     first = read_scored(ocr, image)
     if first.score >= confident_score or not first.text:
         return first
     readings = [first]
-    for name, view in candidate_views(image)[:max_views]:
+    for name, view in candidate_views(image):
         try:
-            readings.append(read_scored(ocr, view, view=name))
+            if name in views:
+                readings.append(read_scored(ocr, view, view=name))
         finally:
             view.close()
-        if readings[-1].score >= confident_score:
-            break
     best = max(readings, key=lambda reading: reading.score)
     if best.score < confident_score and beams > 1:
         source = image if best.view == "orig" else dict(candidate_views(image)).get(best.view, image)

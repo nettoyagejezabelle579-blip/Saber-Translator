@@ -34,25 +34,31 @@ def test_confident_first_reading_is_kept(monkeypatch):
     assert calls == [("orig", 1)]
 
 
-def test_low_confidence_reads_other_views_and_keeps_best(monkeypatch):
-    read, calls = _fake_reader({"orig": -0.9, "pad": -0.5, "contrast": -0.05, "binary": -0.3})
+def test_low_confidence_reads_measured_views_and_keeps_best(monkeypatch):
+    read, calls = _fake_reader({"orig": -0.9, "contrast": -0.5, "binary": -0.03, "square": -0.3})
     monkeypatch.setattr(enhance, "read_scored", read)
     best = enhance.best_reading(object(), _crop())
-    assert best.text == "contrast"
-    # 一旦有足夠把握就停止，不再多讀
-    assert ("binary", 1) not in calls
+    assert best.text == "binary"
+    # 只讀評測選出的三種圖，不讀加粗／留白
+    assert [view for view, _ in calls] == ["orig", "contrast", "binary", "square"]
 
 
-def test_beam_search_is_last_resort(monkeypatch):
-    read, calls = _fake_reader({"orig": -0.9, "pad": -0.8, "contrast": -0.7, "binary": -0.6}, beam_score=-0.2)
+def test_beam_search_is_off_by_default(monkeypatch):
+    read, calls = _fake_reader({"orig": -0.9, "contrast": -0.8, "binary": -0.7, "square": -0.6}, beam_score=-0.1)
     monkeypatch.setattr(enhance, "read_scored", read)
-    best = enhance.best_reading(object(), _crop())
-    assert best.text == "binary-beam"
-    assert calls[-1] == ("binary", 4)
+    assert enhance.best_reading(object(), _crop()).text == "square"
+    assert all(beams == 1 for _, beams in calls)
 
 
-def test_worse_beam_result_is_ignored(monkeypatch):
-    read, _ = _fake_reader({"orig": -0.4, "pad": -0.8, "contrast": -0.7, "binary": -0.6}, beam_score=-0.9)
+def test_beam_search_can_be_enabled(monkeypatch):
+    read, calls = _fake_reader({"orig": -0.9, "contrast": -0.8, "binary": -0.7, "square": -0.6}, beam_score=-0.2)
+    monkeypatch.setattr(enhance, "read_scored", read)
+    assert enhance.best_reading(object(), _crop(), beams=4).text == "square-beam"
+    assert calls[-1] == ("square", 4)
+
+
+def test_original_reading_kept_when_views_are_less_confident(monkeypatch):
+    read, _ = _fake_reader({"orig": -0.4, "contrast": -0.8, "binary": -0.7, "square": -0.6})
     monkeypatch.setattr(enhance, "read_scored", read)
     assert enhance.best_reading(object(), _crop()).text == "orig"
 

@@ -162,8 +162,8 @@ def recognize_japanese_text_best(image_pil):
     reading = best_reading(
         ocr_instance,
         image_pil,
-        confident_score=float(getattr(constants, "MANGA_OCR_CONFIDENT_SCORE", -0.12)),
-        beams=int(getattr(constants, "MANGA_OCR_BEAMS", 4)),
+        confident_score=float(getattr(constants, "MANGA_OCR_CONFIDENT_SCORE", -0.05)),
+        beams=int(getattr(constants, "MANGA_OCR_BEAMS", 0)),
     )
     logger.debug("MangaOCR 加強結果: %r (信心 %.3f, %s)", reading.text, reading.score, reading.view)
     return reading.text

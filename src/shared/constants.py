@@ -211,10 +211,10 @@ REPAIR_DESPECKLE = True
 REPAIR_RESIDUE_CLEANUP = True
 
 # MangaOCR 加強：每次讀取都算信心分數（平均 token 對數機率），低於門檻就用整理過的圖
-# （留白、對比、二值化去網點、小字放大）與 beam search 重讀，取最有把握的結果
+# （提高對比、二值化去網點、補成方形）重讀，取最有把握的結果；合成漫畫字評測錯字率 2.2% → 1.73%
 MANGA_OCR_ENHANCE = True
-MANGA_OCR_CONFIDENT_SCORE = -0.12
-MANGA_OCR_BEAMS = 4
+MANGA_OCR_CONFIDENT_SCORE = -0.05
+MANGA_OCR_BEAMS = 0  # 評測顯示 beam search 會選到錯字，預設關閉
 
 # 翻譯時附上 OCR 錯字還原規則（形近漢字、假名），讓模型依上下文修正辨識錯誤
 OCR_CORRECTION_IN_PROMPT = True
