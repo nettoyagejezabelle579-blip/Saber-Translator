@@ -123,6 +123,19 @@ jobs:
           $build = $env:GITHUB_SHA.Substring(0, 7)
           python .github/scripts/make_update.py dist $build $env:PACKAGE_NAME prev/build-manifest.json $env:PART_LIMIT_BYTES
 
+      - name: Verify the incremental update on the current release (before publishing)
+        if: hashFiles('Saber-Translator-zhHant-CPU-update.zip') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force -Path C:\old-parts | Out-Null
+          gh release download $env:RELEASE_TAG --pattern "$env:PACKAGE_NAME-part*.zip" --dir C:\old-parts
+          powershell -NoProfile -ExecutionPolicy Bypass -File .github/scripts/verify_update_zip.ps1 -OldPartsDir C:\old-parts -UpdateZip "$env:PACKAGE_NAME-update.zip" -Manifest build-manifest.json -Updater packaging\Update-Saber.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'incremental update verification failed' }
+          python .github/scripts/probe_package.py C:\verify-update\Saber-Translator\Saber-Translator.exe
+          Remove-Item C:\verify-update, C:\old-parts -Recurse -Force -ErrorAction SilentlyContinue
+
       - name: Create zip parts
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
