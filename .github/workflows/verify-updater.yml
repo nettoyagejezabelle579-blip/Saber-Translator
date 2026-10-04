@@ -1,7 +1,7 @@
 # 用真正的 GitHub Release 實測 Update-Saber.ps1（在 GitHub 的 Windows 機器上下載，不用使用者的網路）：
 # 下載到一半強制中斷 → 搬成舊版更新程式的位置 → 再執行要續傳、套用到「舊版程式＋書籍資料」上，
 # 最後逐一核對每個檔案的 SHA-256、確認 data-v2 沒變，並實際啟動打包好的程式。
-# Triggered by pushes that change only this file; the portable build ignores it.
+# Triggered by pushes that change only this file; the portable build ignores it. (run 2)
 name: Verify updater against the real release
 
 on:
@@ -62,8 +62,11 @@ jobs:
           if (-not $partial) { throw 'download never started' }
           taskkill /PID $proc.Id /T /F | Out-Null
           Start-Sleep -Seconds 3
+          # GitHub 的網路太快，part1 可能已下載完：截成一半，等於使用者中途關掉視窗
           $partial = Get-Item $partial.FullName
-          Write-Host ("interrupted at {0:N0} MB" -f ($partial.Length / 1MB))
+          $half = [int64]($partial.Length / 2)
+          $stream = [IO.File]::Open($partial.FullName, 'Open', 'Write'); $stream.SetLength($half); $stream.Dispose()
+          Write-Host ("partial download left at {0:N0} MB" -f ($half / 1MB))
           if (Test-Path "$app\BUILD.json") { throw 'program was changed before the download finished' }
 
           # 2) 改成舊版更新程式留下的樣子：分卷放在 saber-update 根目錄、還有 staging
@@ -76,7 +79,10 @@ jobs:
           $code = $LASTEXITCODE
           Get-Content "$root\run2.log" | Where-Object { $_ -notmatch '^\s*[0-9 .%kMG:-]*$' } | Write-Host
           if ($code -ne 0) { throw "update failed ($code)" }
-          if ((Get-Content "$root\run2.log" -Raw) -notmatch 'Resuming transfer from byte position') { throw 'the interrupted download was not resumed' }
+          $log2 = Get-Content "$root\run2.log" -Raw -Encoding UTF8
+          $resumed = [regex]::Unescape('\u7e7c\u7e8c\u4e0a\u6b21\u4e2d\u65b7')  # 繼續上次中斷
+          if ($log2 -notmatch $resumed) { throw 'the interrupted download was not resumed' }
+          Write-Host 'interrupted download was resumed'
 
           # 4) 核對結果
           $manifest = Get-Content "$app\build-manifest.json" -Raw -Encoding UTF8 | ConvertFrom-Json
