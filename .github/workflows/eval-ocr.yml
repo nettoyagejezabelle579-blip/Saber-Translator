@@ -1,4 +1,5 @@
 # 量測 MangaOCR 在難辨識字型上的準確率（原本 vs. 加強版），不會發布任何東西。
+# Triggered by pushes that change only this file.
 name: Evaluate OCR accuracy
 
 on:
