@@ -85,6 +85,20 @@ ConvertTo-Json -Depth 5 @{ name = '繁中免安裝版 (CPU) bbb2222'; assets = $
     Set-Content "$Root\release.json" -Encoding UTF8
 $partFiles | Select-Object -Skip 1 | Copy-Item -Destination "$Root\served"
 
+# 自動更新（開啟 Saber-Translator.exe 時）用的發布資訊：小型更新包＋update-info.json
+Copy-Item "$Root\o2\$Prefix-update.zip", "$Root\o2\update-info.json" -Destination "$Root\served"
+$autoAssets = @(Get-Item "$Root\served\$Prefix-update.zip", "$Root\served\update-info.json" | ForEach-Object {
+    [ordered]@{
+        name = $_.Name
+        size = $_.Length
+        url = 'unused'
+        browser_download_url = "http://127.0.0.1:$port/$($_.Name)"
+        digest = 'sha256:' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+})
+ConvertTo-Json -Depth 5 @{ name = '繁中免安裝版 (CPU) bbb2222'; assets = ($autoAssets + $releaseAssets) } |
+    Set-Content "$Root\release-auto.json" -Encoding UTF8
+
 $tmp = Join-Path $Root 'tmp'
 $work = Join-Path $tmp 'saber-update\build-bbb2222'
 New-Item -ItemType Directory -Force -Path "$work\staging", "$tmp\saber-update\build-old" | Out-Null
@@ -113,6 +127,15 @@ try {
         if ($ranges -notcontains "$($partFiles[1].Name) $half") { throw "part2 was not resumed: $ranges" }
         powershell -NoProfile -ExecutionPolicy Bypass -File "$online\Update-Saber.ps1" -ReleaseFile "$Root\release.json"
         if ($LASTEXITCODE -ne 0) { throw "second run should report up to date ($LASTEXITCODE)" }
+
+        # 自動模式：先等開啟更新的程式結束、不詢問任何問題（-NonInteractive 下有提問就會失敗）、
+        # 套用小型更新後嘗試重新開啟程式（測試裡的 exe 不是真的程式，開啟失敗也不影響結果）
+        $auto = New-Install 'install-auto' $true
+        $dummy = Start-Process powershell -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 3' -PassThru -WindowStyle Hidden
+        powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -File "$auto\Update-Saber.ps1" -ReleaseFile "$Root\release-auto.json" -Auto -WaitPid $dummy.Id
+        if ($LASTEXITCODE -ne 0) { throw "automatic update failed ($LASTEXITCODE)" }
+        if (-not $dummy.HasExited) { throw 'automatic update did not wait for the running program' }
+        Assert-Updated $auto $true
     } finally {
         $env:TEMP = $savedTemp
     }

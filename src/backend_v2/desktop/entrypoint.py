@@ -602,6 +602,12 @@ def run_desktop(args: object) -> int:
             print(json.dumps(_desktop_probe(data_root, settings), sort_keys=True))
             return 0
 
+    # 免安裝版：GitHub 上有新版本時交給 Update-Saber.ps1 更新，更新完會自動重新開啟
+    from src.backend_v2.desktop.auto_update import start_update_if_available
+
+    if start_update_if_available():
+        return 0
+
     _configure_windows_app_identity()
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("Saber-Translator")

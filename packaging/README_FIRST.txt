@@ -24,7 +24,13 @@ Saber-Translator 日漫→繁體中文（台灣／香港）・CPU 免安裝版
 - 並行翻譯開啟、CPU 執行緒受限、桌面寵物關閉，筆電不會卡死。
 
 【更新到新版（保留所有書籍與設定）】
-以後有新版時，不用重新下載整個程式：
+自動更新：每次開啟 Saber-Translator.exe 都會先檢查 GitHub 上有沒有新版（最多等 4 秒，沒網路就照常開啟）。
+有新版時會跳出「自動更新」視窗：下載小型更新包、套用後自動重新開啟程式，書籍與設定都不會被改動。
+只有版本差太多、需要下載完整程式時才會先詢問。
+不想自動更新：在 data-v2 資料夾裡建立一個空白檔案 auto-update-off.txt。
+（自動更新同樣需要下面第 2 步的 GitHub 權杖；用 Update-Saber.bat 設定過一次即可。）
+
+手動更新，或第一次設定權杖：
 1. 雙擊本資料夾裡的「Update-Saber.bat」。
 2. 第一次會要求貼上 GitHub「唯讀存取權杖」（倉庫是私人的才需要，只需一次）：
    GitHub 右上角頭像 → Settings → Developer settings → Personal access tokens →

@@ -3,7 +3,9 @@
 param(
     [switch]$Offline,                     # 不連 GitHub，只用下載資料夾裡的檔案
     [string]$DownloadsDir = '',           # 預設為使用者的「下載」資料夾
-    [string]$ReleaseFile = ''             # 測試用：從檔案讀取 Release 資訊
+    [string]$ReleaseFile = '',            # 測試用：從檔案讀取 Release 資訊
+    [switch]$Auto,                        # 由 Saber-Translator.exe 開啟時自動執行：不詢問，更新後重新開啟程式
+    [int]$WaitPid = 0                     # 先等這個程序（剛才開啟的 Saber-Translator）結束
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -18,19 +20,42 @@ $TokenFile = Join-Path $DataDir 'github-token.txt'
 $WorkRoot = Join-Path $env:TEMP 'saber-update'
 
 function Say([string]$Message, [string]$Color = 'White') { Write-Host $Message -ForegroundColor $Color }
-function Stop-Update([string]$Message) { Say $Message 'Red'; exit 1 }
+function Start-Saber {
+    # 重新開啟時略過更新檢查，避免更新失敗時反覆開啟更新程式
+    $env:SABER_SKIP_UPDATE_CHECK = '1'
+    try { Start-Process -FilePath (Join-Path $App 'Saber-Translator.exe') -WorkingDirectory $App | Out-Null }
+    catch { Say "無法自動開啟 Saber-Translator，請手動雙擊 Saber-Translator.exe。（$($_.Exception.Message)）" 'Yellow' }
+}
+function Ask([string]$Question) {
+    try { return (Read-Host $Question) } catch { return '' }
+}
+function Stop-Update([string]$Message) {
+    Say $Message 'Red'
+    if ($Auto -and (Test-Path (Join-Path $App 'Saber-Translator.exe'))) {
+        Ask '按 Enter 開啟 Saber-Translator（這次先不更新）' | Out-Null
+        Start-Saber
+    }
+    exit 1
+}
+if ($Auto) {
+    try { $Host.UI.RawUI.WindowTitle = 'Saber-Translator 自動更新' } catch { }
+    Say 'Saber-Translator 有新版本，正在自動更新（書籍、設定、API Key 都不會被改動）...' 'Cyan'
+}
 
 if (-not (Test-Path (Join-Path $App 'Saber-Translator.exe'))) {
     Stop-Update '請把更新程式放在 Saber-Translator.exe 所在的資料夾再執行。'
 }
 
-# 1. 關閉執行中的 Saber-Translator
+# 1. 關閉執行中的 Saber-Translator（自動更新時先等剛才開啟的程式自己結束）
+if ($WaitPid -gt 0) {
+    Wait-Process -Id $WaitPid -Timeout 60 -ErrorAction SilentlyContinue
+}
 $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
     $_.Path -and $_.Path.StartsWith($App, [StringComparison]::OrdinalIgnoreCase)
 })
 if ($running.Count -gt 0) {
     Say 'Saber-Translator 正在執行，更新前需要先關閉。' 'Yellow'
-    $answer = Read-Host '要自動關閉嗎？(Y/N)'
+    $answer = Ask '要自動關閉嗎？(Y/N)'
     if ($answer -notmatch '^[Yy]') { Stop-Update '已取消。請關閉 Saber-Translator 後再執行更新。' }
     $running | Stop-Process -Force
     Start-Sleep -Seconds 3
@@ -61,6 +86,8 @@ try {
 } catch {
     if ($Offline) {
         Say '離線模式：使用下載資料夾裡的更新檔。'
+    } elseif ($Auto) {
+        Stop-Update ('無法連線到 GitHub（' + $_.Exception.Message + '），這次先不更新。')
     } elseif (-not $Token) {
         Say '這個 GitHub 倉庫是私人倉庫，需要一組「唯讀存取權杖」才能自動下載更新（只需設定一次）。' 'Yellow'
         Say '建立方式：GitHub 右上角頭像 → Settings → Developer settings → Personal access tokens'
@@ -201,6 +228,7 @@ if ($Release) {
     if ($LocalBuild -and $LocalBuild -eq $RemoteBuild) {
         Say "已經是最新版本（$LocalBuild），不需要更新。" 'Green'
         Remove-Item $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
+        if ($Auto) { Start-Saber }
         exit 0
     }
     $Work = Use-WorkDir ('build-' + ($RemoteBuild -replace '[^A-Za-z0-9._-]', '_'))
@@ -215,6 +243,17 @@ if ($Release) {
         if ($parts.Count -eq 0) { Stop-Update 'GitHub 上找不到更新檔，請稍後再試。' }
         $total = ($parts | Measure-Object -Property size -Sum).Sum / 1GB
         Say ("需要下載完整程式：{0} 個分卷，約 {1:N1} GB（書籍與設定會保留）。" -f $parts.Count, $total) 'Yellow'
+        if ($Auto) {
+            # 版本差太多才需要完整下載，時間較長，先問一聲
+            $answer = Ask '這次需要下載完整程式，時間較長。現在下載嗎？(Y/N)'
+            if ($answer -notmatch '^[Yy]') {
+                New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+                Set-Content -LiteralPath (Join-Path $DataDir 'update-skipped.txt') -Value $RemoteBuild -Encoding ASCII
+                Say '已略過這個版本，開啟程式時不會再詢問；之後要更新請雙擊 Update-Saber.bat。' 'Yellow'
+                Start-Saber
+                exit 0
+            }
+        }
         Say '中途關掉視窗或斷線也沒關係：再執行一次會從中斷處繼續，已下載的分卷不會重新下載。'
         Assert-FreeSpace $parts
         foreach ($part in $parts) { Get-AndExtract $part }
@@ -271,5 +310,12 @@ Remove-Item $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 $NewBuild = ''
 if (Test-Path $BuildFile) { $NewBuild = (Get-Content $BuildFile -Raw | ConvertFrom-Json).build }
+Remove-Item -LiteralPath (Join-Path $DataDir 'update-skipped.txt') -Force -ErrorAction SilentlyContinue
 Say "更新完成！目前版本：$NewBuild。你的書籍、設定、API Key、術語表都已保留。" 'Green'
-Say '現在可以重新開啟 Saber-Translator.exe。'
+if ($Auto) {
+    Say '正在重新開啟 Saber-Translator...'
+    Start-Saber
+    Start-Sleep -Seconds 2
+} else {
+    Say '現在可以重新開啟 Saber-Translator.exe。'
+}
