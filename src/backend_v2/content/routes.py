@@ -32,6 +32,7 @@ from src.backend_v2.content.repository import (
     IdempotencyConflict,
 )
 from src.backend_v2.storage.assets import AssetStorageService
+from src.backend_v2.content import chapter_covers
 from src.backend_v2.storage.platform_repositories import (
     FontRepository,
     PromptRepository,
@@ -144,9 +145,24 @@ def create_content_blueprint(
         )
         return jsonify(created), 201
 
+    def _attach_chapter_covers(chapter_list) -> None:
+        # 每個章節（卷）的封面：自訂封面或第一頁縮圖；版本號讓瀏覽器在換封面後重新載入
+        for chapter in chapter_list or []:
+            custom = chapter_covers.custom_cover_path(Path(data_root), str(chapter["id"]))
+            has_custom = custom.is_file()
+            version = (
+                f"c{int(custom.stat().st_mtime)}"
+                if has_custom
+                else f"a{chapter.get('pageOrderRevision', 1)}"
+            )
+            chapter["coverUrl"] = f"/api/v2/chapters/{chapter['id']}/cover?v={version}"
+            chapter["hasCustomCover"] = has_custom
+
     @blueprint.get("/books/<book_id>")
     def get_book(book_id: str) -> Response:
-        return jsonify(repository.get_book(book_id))
+        result = repository.get_book(book_id)
+        _attach_chapter_covers(result.get("chapters"))
+        return jsonify(result)
 
     @blueprint.put("/books/<book_id>")
     def update_book(book_id: str) -> Response:
@@ -215,7 +231,40 @@ def create_content_blueprint(
 
     @blueprint.get("/books/<book_id>/chapters")
     def list_chapters(book_id: str) -> Response:
-        return jsonify(repository.list_chapters(book_id))
+        result = repository.list_chapters(book_id)
+        _attach_chapter_covers(result["chapters"])
+        return jsonify(result)
+
+    @blueprint.get("/chapters/<chapter_id>/cover")
+    def get_chapter_cover(chapter_id: str):
+        # 自訂封面優先；沒有就用第一頁的縮圖
+        first_asset = repository.chapter_cover_source(chapter_id)
+        custom = chapter_covers.custom_cover_path(Path(data_root), chapter_id)
+        if custom.is_file():
+            path = custom
+        elif first_asset is not None and (located := media.locate(first_asset)) is not None:
+            path = chapter_covers.auto_cover(Path(data_root), chapter_id, first_asset, Path(located.path))
+        else:
+            return _error("no_cover", "chapter has no cover and no pages", 404)
+        response = send_file(path, mimetype="image/jpeg", conditional=True, max_age=0)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @blueprint.put("/chapters/<chapter_id>/cover")
+    def set_chapter_cover(chapter_id: str) -> Response:
+        repository.chapter_cover_source(chapter_id)  # 確認章節存在且屬於目前使用者
+        _validate_multipart_fields(allowed_form_keys=set(), allowed_file_keys={"cover"})
+        cover = request.files.get("cover")
+        if cover is None:
+            raise ValueError("cover file is required")
+        chapter_covers.save_custom_cover(Path(data_root), chapter_id, cover.stream)
+        return jsonify({"chapterId": chapter_id, "hasCustomCover": True})
+
+    @blueprint.delete("/chapters/<chapter_id>/cover")
+    def clear_chapter_cover(chapter_id: str) -> Response:
+        repository.chapter_cover_source(chapter_id)
+        chapter_covers.custom_cover_path(Path(data_root), chapter_id).unlink(missing_ok=True)
+        return jsonify({"chapterId": chapter_id, "hasCustomCover": False})
 
     @blueprint.post("/books/<book_id>/chapters")
     def create_chapter(book_id: str) -> tuple[Response, int]:
@@ -239,6 +288,7 @@ def create_content_blueprint(
     @blueprint.delete("/chapters/<chapter_id>")
     def delete_chapter(chapter_id: str) -> Response:
         repository.delete_chapter(chapter_id)
+        chapter_covers.remove_covers(Path(data_root), chapter_id)
         return jsonify({"deleted": True})
 
     @blueprint.put("/books/<book_id>/chapters/order")

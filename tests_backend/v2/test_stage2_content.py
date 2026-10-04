@@ -2726,3 +2726,65 @@ def test_promote_to_existing_book_keeps_destination_constraints_and_resets_quick
         repository.get_constraints(QUICK_WORKSPACE_BOOK_ID)["payload"]
         == empty_translation_constraints()
     )
+
+
+def test_chapter_covers_default_to_first_page_and_accept_custom_images(content_platform) -> None:
+    data_root, engine, repository, _storage, _importer, book, chapter = content_platform
+    app = create_api_app(
+        ApiSettings(
+            data_root=data_root,
+            identity=RuntimeIdentity(epoch_id="test-api", epoch_token="test-only", test_mode=True),
+            engine=engine,
+        )
+    )
+    client = app.test_client()
+    book_id, chapter_id = str(book["id"]), str(chapter["id"])
+
+    # 沒有頁面、沒有封面
+    listed = client.get(f"/api/v2/books/{book_id}/chapters").get_json()["chapters"][0]
+    assert listed["hasCustomCover"] is False
+    assert client.get(listed["coverUrl"]).status_code == 404
+
+    # 有頁面後自動用第一頁縮圖
+    style = {**DEFAULT_TEXT_STYLE}
+    created = client.post(
+        f"/api/v2/chapters/{chapter_id}/pages",
+        data={
+            "file": (BytesIO(_image_bytes((400, 600), color=(200, 30, 30))), "p1.png"),
+            "logicalPath": "p1.png",
+            "textStyle": json.dumps(style),
+        },
+        headers={"Idempotency-Key": "cover-page-1"},
+    )
+    assert created.status_code == 201
+    auto = client.get(f"/api/v2/chapters/{chapter_id}/cover")
+    assert auto.status_code == 200 and auto.mimetype == "image/jpeg"
+    with Image.open(BytesIO(auto.data)) as image:
+        assert max(image.size) <= 540
+        assert image.getpixel((10, 10))[0] > 150  # 第一頁是紅色
+
+    # 自訂封面
+    saved = client.put(
+        f"/api/v2/chapters/{chapter_id}/cover",
+        data={"cover": (BytesIO(_image_bytes((1200, 1800), color=(20, 20, 220))), "cover.png")},
+    )
+    assert saved.status_code == 200 and saved.get_json()["hasCustomCover"] is True
+    custom = client.get(f"/api/v2/chapters/{chapter_id}/cover")
+    with Image.open(BytesIO(custom.data)) as image:
+        assert max(image.size) <= 900
+        assert image.getpixel((10, 10))[2] > 150  # 自訂的藍色封面
+    listed = client.get(f"/api/v2/books/{book_id}/chapters").get_json()["chapters"][0]
+    assert listed["hasCustomCover"] is True and "?v=c" in listed["coverUrl"]
+
+    # 不是圖片
+    bad = client.put(
+        f"/api/v2/chapters/{chapter_id}/cover",
+        data={"cover": (BytesIO(b"not an image"), "cover.png")},
+    )
+    assert bad.status_code in (400, 422)
+
+    # 移除後回到第一頁；刪除章節會一併清掉封面檔
+    assert client.delete(f"/api/v2/chapters/{chapter_id}/cover").get_json()["hasCustomCover"] is False
+    with Image.open(BytesIO(client.get(f"/api/v2/chapters/{chapter_id}/cover").data)) as image:
+        assert image.getpixel((10, 10))[0] > 150
+    assert client.get("/api/v2/chapters/not-a-real-chapter/cover").status_code == 404

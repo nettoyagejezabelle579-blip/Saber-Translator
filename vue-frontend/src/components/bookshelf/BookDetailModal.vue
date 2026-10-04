@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '@/stores/bookshelfStore'
 import { ApiClientError } from '@/api/client'
-import { createChaptersExportJob, getBookDetail } from '@/api/bookshelf'
+import { clearChapterCover, createChaptersExportJob, getBookDetail, setChapterCover } from '@/api/bookshelf'
 import { showToast, useToast } from '@/utils/toast'
 import { triggerUrlDownload, withDownloadFileName } from '@/utils/browserDownload'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -339,6 +339,23 @@ async function handleChapterReorder(chapterIds: string[]): Promise<boolean> {
   }
 }
 
+const coverBusyChapterId = ref<string | null>(null)
+
+async function changeChapterCover(chapterId: string, file: File | null): Promise<void> {
+  if (coverBusyChapterId.value) return
+  coverBusyChapterId.value = chapterId
+  try {
+    if (file) await setChapterCover(chapterId, file)
+    else await clearChapterCover(chapterId)
+    await refreshBookDetail()
+    showToast(file ? '封面已更新' : '已改回使用第一页', 'success')
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '封面更新失败', 'error')
+  } finally {
+    coverBusyChapterId.value = null
+  }
+}
+
 async function refreshBookDetail() {
   if (!currentBook.value) return
   try {
@@ -533,6 +550,9 @@ async function quickAddTagToBook(tagName: string): Promise<boolean> {
         :selected-chapter-ids="selectedChapterIds"
         :translation-pending="isBatchTranslating"
         :translation-allowed="translationAllowed"
+        :cover-busy-chapter-id="coverBusyChapterId"
+        @set-cover="(chapterId, file) => changeChapterCover(chapterId, file)"
+        @clear-cover="chapterId => changeChapterCover(chapterId, null)"
         @create="openCreateChapterModal"
         @delete="deleteChapter"
         @drag-end="handleChapterDragEnd"

@@ -52,6 +52,8 @@ function toChapter(chapter: V2Chapter): ChapterData {
     order: Math.max(0, chapter.ordinal - 1),
     imageCount: chapter.pageCount || 0,
     jobStatusSummary: chapter.jobStatusSummary,
+    coverUrl: chapter.coverUrl,
+    hasCustomCover: chapter.hasCustomCover,
   }
 }
 
@@ -285,6 +287,20 @@ export function createChaptersExportJob(
     { chapterIds, preserveOriginalFilenames },
     { headers: { 'Idempotency-Key': newIdempotencyKey() } },
   )
+}
+
+type V2ChapterCoverResult = components['schemas']['ChapterCoverResult']
+
+/** 設定章節（卷）封面。 */
+export function setChapterCover(chapterId: string, cover: File): Promise<V2ChapterCoverResult> {
+  const body = new FormData()
+  body.append('cover', cover, cover.name)
+  return apiClient.upload<V2ChapterCoverResult>(`${chapterPath(chapterId)}/cover`, body, undefined, 'put')
+}
+
+/** 移除自訂封面，改回顯示第一頁。 */
+export function clearChapterCover(chapterId: string): Promise<V2ChapterCoverResult> {
+  return apiClient.delete<V2ChapterCoverResult>(`${chapterPath(chapterId)}/cover`)
 }
 
 export async function deleteChapter(

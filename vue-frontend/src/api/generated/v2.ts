@@ -1412,6 +1412,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chapters/{chapter_id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chapter_id: components["parameters"]["ChapterId"];
+            };
+            cookie?: never;
+        };
+        /** @description Custom chapter cover, or a thumbnail of the first page when none is set. */
+        get: operations["getChapterCover"];
+        put: operations["setChapterCover"];
+        post?: never;
+        delete: operations["clearChapterCover"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chapters/{chapter_id}/pages/order": {
         parameters: {
             query?: never;
@@ -5027,6 +5046,9 @@ export interface components {
             title: string;
             pageCount?: number;
             pageOrderRevision: number;
+            /** @description Custom cover or first-page thumbnail. */
+            coverUrl?: string;
+            hasCustomCover?: boolean;
             jobStatusSummary?: components["schemas"]["JobStatusSummary"];
         };
         JobStatusSummary: {
@@ -5038,6 +5060,10 @@ export interface components {
         };
         TitleUpdateCommand: {
             title: string;
+        };
+        ChapterCoverResult: {
+            chapterId: string;
+            hasCustomCover: boolean;
         };
         ChapterTitleResult: {
             id: components["schemas"]["Uuid"];
@@ -8902,6 +8928,83 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             423: components["responses"]["Locked"];
+        };
+    };
+    getChapterCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chapter_id: components["parameters"]["ChapterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description JPEG cover image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setChapterCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chapter_id: components["parameters"]["ChapterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    cover: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Chapter cover saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterCoverResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    clearChapterCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chapter_id: components["parameters"]["ChapterId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom cover removed; the first page is shown again. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterCoverResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     reorderChapterPages: {

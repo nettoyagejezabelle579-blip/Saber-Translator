@@ -1923,6 +1923,50 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "423": {$ref: "#/components/responses/Locked"}
+  /chapters/{chapter_id}/cover:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    get:
+      tags: [content]
+      operationId: getChapterCover
+      description: Custom chapter cover, or a thumbnail of the first page when none is set.
+      responses:
+        "200":
+          description: JPEG cover image.
+          content:
+            image/jpeg:
+              schema: {type: string, format: binary}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      tags: [content]
+      operationId: setChapterCover
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [cover]
+              properties:
+                cover: {type: string, format: binary}
+      responses:
+        "200":
+          description: Chapter cover saved.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChapterCoverResult"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+    delete:
+      tags: [content]
+      operationId: clearChapterCover
+      responses:
+        "200":
+          description: Custom cover removed; the first page is shown again.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChapterCoverResult"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /chapters/{chapter_id}/pages/order:
     put:
       tags: [content]
@@ -8203,6 +8247,8 @@ components:
         title: {type: string}
         pageCount: {type: integer, minimum: 0}
         pageOrderRevision: {type: integer, minimum: 1}
+        coverUrl: {type: string, description: "Custom cover or first-page thumbnail."}
+        hasCustomCover: {type: boolean}
         jobStatusSummary: {$ref: "#/components/schemas/JobStatusSummary"}
     JobStatusSummary:
       type: object
@@ -8219,6 +8265,13 @@ components:
       required: [title]
       properties:
         title: {type: string, minLength: 1, maxLength: 500}
+    ChapterCoverResult:
+      type: object
+      additionalProperties: false
+      required: [chapterId, hasCustomCover]
+      properties:
+        chapterId: {type: string}
+        hasCustomCover: {type: boolean}
     ChapterTitleResult:
       type: object
       additionalProperties: false

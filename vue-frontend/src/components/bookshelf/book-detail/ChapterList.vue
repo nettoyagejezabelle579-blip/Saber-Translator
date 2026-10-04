@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import ProductScrollStack from '@/components/product/ProductScrollStack.vue'
 import ProductSectionHeader from '@/components/product/ProductSectionHeader.vue'
 import ProductStatusBanner from '@/components/product/ProductStatusBanner.vue'
 import type { ChapterData } from '@/types/api'
 import ChapterRow from './ChapterRow.vue'
+import ChapterCoverGrid from './ChapterCoverGrid.vue'
 
 const props = withDefaults(defineProps<{
   chapters: ChapterData[]
@@ -15,11 +16,13 @@ const props = withDefaults(defineProps<{
   downloadPending?: boolean
   translationPending?: boolean
   translationAllowed?: boolean
+  coverBusyChapterId?: string | null
 }>(), {
   selectedChapterIds: () => new Set<string>(),
   downloadPending: false,
   translationPending: false,
   translationAllowed: true,
+  coverBusyChapterId: null,
 })
 
 const emit = defineEmits<{
@@ -37,7 +40,27 @@ const emit = defineEmits<{
   (event: 'selectAll', chapterIds: string[]): void
   (event: 'downloadSelected'): void
   (event: 'translateSelected'): void
+  (event: 'setCover', chapterId: string, file: File): void
+  (event: 'clearCover', chapterId: string): void
 }>()
+
+// 封面（單行本）/ 列表兩種顯示方式，記住使用者的選擇
+const VIEW_KEY = 'saber.chapterListView'
+function readView(): 'covers' | 'list' {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'covers'
+  } catch {
+    return 'covers'
+  }
+}
+const view = ref<'covers' | 'list'>(readView())
+watch(view, value => {
+  try {
+    localStorage.setItem(VIEW_KEY, value)
+  } catch {
+    // 無法儲存時只影響下次預設顯示
+  }
+})
 
 const selectableChapterIds = computed(() => props.chapters
   .filter(chapter => (chapter.imageCount ?? 0) > 0)
@@ -86,14 +109,33 @@ function toggleAll() {
         >
           翻译选中章节（{{ selectedChapterIds.size }}）
         </UiButton>
+        <UiButton
+          v-if="chapters.length"
+          size="sm"
+          variant="secondary"
+          :aria-pressed="view === 'covers'"
+          @click="view = view === 'covers' ? 'list' : 'covers'"
+        >
+          {{ view === 'covers' ? '列表显示' : '封面显示' }}
+        </UiButton>
         <UiButton size="sm" variant="primary" @click="$emit('create')">
           <span aria-hidden="true">+</span>
           <span>新建章节</span>
         </UiButton>
       </template>
     </ProductSectionHeader>
+    <ChapterCoverGrid
+      v-if="chapters.length > 0 && view === 'covers'"
+      :chapters="chapters"
+      :translation-allowed="translationAllowed"
+      :busy-chapter-id="coverBusyChapterId"
+      @read="$emit('read', $event)"
+      @translate="$emit('translate', $event)"
+      @set-cover="(chapterId, file) => $emit('setCover', chapterId, file)"
+      @clear-cover="$emit('clearCover', $event)"
+    />
     <ProductScrollStack
-      v-if="chapters.length > 0"
+      v-else-if="chapters.length > 0"
       class="chapter-list__list"
       aria-label="章节列表"
       gap="sm"

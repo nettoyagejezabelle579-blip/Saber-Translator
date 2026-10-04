@@ -605,6 +605,30 @@ class ContentRepository:
                 )
         return {"deleted": deleted, "rejected": rejected}
 
+    def chapter_cover_source(self, chapter_id: str) -> str | None:
+        """Owner-checked first-page source asset of a chapter (None when it has no pages)."""
+        with self.engine.connect() as connection:
+            owned = connection.execute(
+                select(chapters.c.id)
+                .join(books, books.c.id == chapters.c.book_id)
+                .where(
+                    chapters.c.id == chapter_id,
+                    books.c.owner_user_id == effective_owner_id(),
+                )
+            ).scalar_one_or_none()
+            if owned is None:
+                raise ContentNotFound("chapter not found")
+            return connection.execute(
+                select(page_assets.c.asset_id)
+                .join(pages, pages.c.id == page_assets.c.page_id)
+                .where(
+                    pages.c.chapter_id == chapter_id,
+                    page_assets.c.role == "source",
+                )
+                .order_by(pages.c.ordinal)
+                .limit(1)
+            ).scalar_one_or_none()
+
     def update_chapter(self, *, chapter_id: str, title: str) -> dict[str, object]:
         normalized = title.strip()
         if not normalized or len(normalized) > 500:

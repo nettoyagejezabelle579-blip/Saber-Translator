@@ -23,6 +23,9 @@ export interface ChapterData {
   order: number
   imageCount?: number
   jobStatusSummary?: JobStatusSummary
+  /** 章節（卷）封面：自訂封面或第一頁縮圖 */
+  coverUrl?: string
+  hasCustomCover?: boolean
 }
 
 export type TagData = components['schemas']['Tag']
