@@ -337,7 +337,37 @@ describe('bookshelf detail child components', () => {
     expect(source).not.toContain('.section-header h3')
   })
 
+  it('shows chapters as cover cards by default and lets users change covers', async () => {
+    localStorage.removeItem('saber.chapterListView')
+    const wrapper = mount(ChapterList, {
+      props: {
+        chapters: [
+          { id: 'c1', title: '第1卷', order: 0, imageCount: 3, coverUrl: '/api/v2/chapters/c1/cover?v=a1' },
+          { id: 'c2', title: '第2卷', order: 1, imageCount: 2, coverUrl: '/api/v2/chapters/c2/cover?v=c9', hasCustomCover: true },
+        ],
+        draggedChapterIndex: null,
+        dragOverChapterIndex: null,
+      },
+    })
+    const covers = wrapper.findAll('.chapter-cover img')
+    expect(covers.map(img => img.attributes('src'))).toEqual([
+      '/api/v2/chapters/c1/cover?v=a1',
+      '/api/v2/chapters/c2/cover?v=c9',
+    ])
+    // 只有自訂封面才顯示「用第一页」
+    const cards = wrapper.findAll('.chapter-cover')
+    expect(cards[0]!.text()).not.toContain('用第一页')
+    await cards[1]!.findAll('button').find(button => button.text() === '用第一页')!.trigger('click')
+    expect(wrapper.emitted('clearCover')).toEqual([['c2']])
+
+    // 切換成列表後會記住
+    await wrapper.findAll('button').find(button => button.text() === '列表显示')!.trigger('click')
+    expect(wrapper.find('.chapter-cover').exists()).toBe(false)
+    expect(localStorage.getItem('saber.chapterListView')).toBe('list')
+  })
+
   it('delegates chapter-list scrolling to the product scroll stack', () => {
+    localStorage.setItem('saber.chapterListView', 'list')
     const wrapper = mount(ChapterList, {
       props: {
         chapters: [
@@ -435,6 +465,7 @@ describe('bookshelf detail child components', () => {
   })
 
   it('keeps chapter download selection available when translation is unavailable', async () => {
+    localStorage.setItem('saber.chapterListView', 'list')
     const wrapper = mount(ChapterList, {
       props: {
         chapters: [{
