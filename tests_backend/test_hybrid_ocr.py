@@ -43,6 +43,7 @@ class HybridOcrCoreTests(unittest.TestCase):
 
     def test_plain_manga_ocr_no_longer_uses_48px_composite_confidence(self) -> None:
         with mock.patch("src.core.ocr.recognize_japanese_text", return_value="こんにちは"), \
+             mock.patch("src.core.ocr.recognize_japanese_text_best", return_value="こんにちは"), \
              mock.patch("src.interfaces.ocr_48px.get_48px_ocr_handler", side_effect=AssertionError("48px should not be used")):
             results = recognize_ocr_results_in_bubbles(
                 Image.new("RGB", (16, 16), color="white"),

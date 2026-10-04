@@ -151,3 +151,19 @@ def recognize_japanese_text(image_pil):
     finally:
         if converted is not None:
             converted.close()
+
+
+def recognize_japanese_text_best(image_pil):
+    """MangaOCR 加強版：先讀一次，沒把握時用整理過的圖與 beam search 重讀，取信心最高的結果。"""
+    from src.interfaces.manga_ocr_enhance import best_reading
+    from src.shared import constants
+
+    ocr_instance = get_manga_ocr_instance()
+    reading = best_reading(
+        ocr_instance,
+        image_pil,
+        confident_score=float(getattr(constants, "MANGA_OCR_CONFIDENT_SCORE", -0.12)),
+        beams=int(getattr(constants, "MANGA_OCR_BEAMS", 4)),
+    )
+    logger.debug("MangaOCR 加強結果: %r (信心 %.3f, %s)", reading.text, reading.score, reading.view)
+    return reading.text

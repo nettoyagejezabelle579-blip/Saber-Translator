@@ -8,7 +8,7 @@ from PIL import Image
 import io
 import torch
 
-from src.interfaces.manga_ocr_interface import recognize_japanese_text
+from src.interfaces.manga_ocr_interface import recognize_japanese_text, recognize_japanese_text_best
 from src.interfaces.paddle_ocr_onnx_interface import get_paddle_ocr_handler
 from src.interfaces.baidu_ocr_interface import recognize_text_with_baidu_ocr
 from src.shared import constants
@@ -346,7 +346,10 @@ def _recognize_with_manga_ocr_results(
         try:
             bubble_img_np = img_np[y1:y2, x1:x2]
             with Image.fromarray(bubble_img_np) as bubble_img_pil:
-                text = recognize_japanese_text(bubble_img_pil)
+                if getattr(constants, "MANGA_OCR_ENHANCE", False):
+                    text = recognize_japanese_text_best(bubble_img_pil)
+                else:
+                    text = recognize_japanese_text(bubble_img_pil)
             textlines = (
                 textlines_per_bubble[i]
                 if isinstance(textlines_per_bubble, list) and i < len(textlines_per_bubble)

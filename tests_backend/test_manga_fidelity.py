@@ -181,6 +181,7 @@ def test_manga_ocr_rereads_dense_bubbles_in_chunks(monkeypatch, ocr_module):
         return "あ" if crop.size[0] > 200 else "わたしのこえ"
 
     monkeypatch.setattr(ocr, "recognize_japanese_text", fake_recognize)
+    monkeypatch.setattr(ocr, "recognize_japanese_text_best", fake_recognize)
     results = ocr._recognize_with_manga_ocr_results(image, [(80, 0, 380, 300)], [lines])
     assert results[0].text == "わたしのこえ" * 3
 
@@ -197,6 +198,7 @@ def test_manga_ocr_keeps_good_whole_bubble_result(monkeypatch, ocr_module):
         return "これでぜんぶよめた"
 
     monkeypatch.setattr(ocr, "recognize_japanese_text", fake_recognize)
+    monkeypatch.setattr(ocr, "recognize_japanese_text_best", fake_recognize)
     results = ocr._recognize_with_manga_ocr_results(image, [(200, 0, 380, 120)], [lines])
     assert results[0].text == "これでぜんぶよめた"
     assert len(calls) == 1
