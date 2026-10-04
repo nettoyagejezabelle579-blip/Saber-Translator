@@ -199,6 +199,104 @@ def refine_detection_result_with_reference_blocks(
     )
 
 
+def _area_inside(block: TextBlock, reference_block: TextBlock) -> float:
+    polygon = _block_polygon(block)
+    reference = _block_polygon(reference_block)
+    if polygon.is_empty or reference.is_empty or polygon.area <= 0:
+        return 0.0
+    return polygon.intersection(reference).area / polygon.area
+
+
+def _owning_reference(block: TextBlock, reference_blocks: Sequence[TextBlock], share: float) -> Optional[int]:
+    """The single reference bubble that contains most of this block, if any."""
+    owners = [
+        index for index, reference in enumerate(reference_blocks)
+        if _area_inside(block, reference) >= share
+    ]
+    return owners[0] if len(owners) == 1 else None
+
+
+def consolidate_with_reference_blocks(
+    detection_result: DetectionResult,
+    reference_result: DetectionResult,
+    image: Image.Image,
+    right_to_left: bool = True,
+    share: float = 0.6,
+) -> DetectionResult:
+    """Fix the opposite mistakes of the split step.
+
+    * Text blocks that lie inside the same reference bubble are merged, so one
+      bubble is translated as one sentence instead of several fragments.
+    * Text lines the merger dropped are attached to the block in the same
+      reference bubble (or directly beside it), so no part of a sentence is
+      left untranslated.
+    """
+    blocks = list(detection_result.blocks)
+    references = list(reference_result.blocks)
+    if not blocks or not references:
+        return detection_result
+    changed = False
+
+    # 1) 同一個氣泡被切成好幾塊 → 合併（方向一致才合併）
+    groups: dict[int, List[TextBlock]] = {}
+    loose: List[TextBlock] = []
+    for block in blocks:
+        owner = _owning_reference(block, references, share)
+        if owner is None:
+            loose.append(block)
+        else:
+            groups.setdefault(owner, []).append(block)
+    merged_blocks: List[TextBlock] = list(loose)
+    for owner, members in groups.items():
+        directions = {member.direction for member in members}
+        if len(members) > 1 and len(directions) == 1:
+            rebuilt = build_text_block_from_lines([line for member in members for line in member.lines])
+            if rebuilt is not None:
+                merged_blocks.append(rebuilt)
+                changed = True
+                continue
+        merged_blocks.extend(members)
+
+    # 2) 合併時被丟掉的文字行 → 補回所在氣泡
+    used = {tuple(line.pts.reshape(-1)) for block in merged_blocks for line in block.lines}
+    orphans = [line for line in detection_result.raw_lines if tuple(line.pts.reshape(-1)) not in used]
+    for line in orphans:
+        target = None
+        line_block = TextBlock(lines=[line])
+        owner = _owning_reference(line_block, references, share)
+        if owner is not None:
+            inside = [i for i, b in enumerate(merged_blocks) if _owning_reference(b, references, share) == owner]
+            if inside:
+                target = inside[0]
+        if target is None:
+            nearest = min(
+                range(len(merged_blocks)),
+                key=lambda i: _block_polygon(merged_blocks[i]).distance(line.polygon),
+            )
+            if _block_polygon(merged_blocks[nearest]).distance(line.polygon) <= line.font_size * 0.8:
+                target = nearest
+        if target is None:
+            continue
+        rebuilt = build_text_block_from_lines(list(merged_blocks[target].lines) + [line])
+        if rebuilt is not None:
+            merged_blocks[target] = rebuilt
+            changed = True
+
+    if not changed:
+        return detection_result
+    converted = image.convert('RGB')
+    try:
+        img_cv = cv2.cvtColor(np.array(converted), cv2.COLOR_RGB2BGR)
+    finally:
+        if converted is not image:
+            converted.close()
+    return DetectionResult(
+        blocks=sort_blocks_by_reading_order(merged_blocks, right_to_left=right_to_left, img=img_cv),
+        mask=detection_result.mask,
+        raw_lines=detection_result.raw_lines,
+    )
+
+
 def apply_saber_yolo_refinement(
     image: Image.Image,
     detection_result: DetectionResult,
@@ -230,13 +328,21 @@ def apply_saber_yolo_refinement(
         enable_aux_yolo_detection=False,
     )
 
-    if len(reference_result.blocks) < 2:
+    if not reference_result.blocks:
         return detection_result
-
-    return refine_detection_result_with_reference_blocks(
-        detection_result,
-        reference_result,
-        image,
-        right_to_left=right_to_left,
-        reference_overlap_threshold=reference_overlap_threshold,
-    )
+    if len(reference_result.blocks) >= 2:
+        detection_result = refine_detection_result_with_reference_blocks(
+            detection_result,
+            reference_result,
+            image,
+            right_to_left=right_to_left,
+            reference_overlap_threshold=reference_overlap_threshold,
+        )
+    if getattr(constants, "CONSOLIDATE_BUBBLES", True):
+        detection_result = consolidate_with_reference_blocks(
+            detection_result,
+            reference_result,
+            image,
+            right_to_left=right_to_left,
+        )
+    return detection_result
