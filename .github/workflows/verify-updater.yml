@@ -1,6 +1,7 @@
 # 用真正的 GitHub Release 實測 Update-Saber.ps1（在 GitHub 的 Windows 機器上下載，不用使用者的網路）：
 # 下載到一半強制中斷 → 搬成舊版更新程式的位置 → 再執行要續傳、套用到「舊版程式＋書籍資料」上，
 # 最後逐一核對每個檔案的 SHA-256、確認 data-v2 沒變，並實際啟動打包好的程式。
+# Triggered by pushes that change only this file; the portable build ignores it.
 name: Verify updater against the real release
 
 on:
