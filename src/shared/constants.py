@@ -210,6 +210,12 @@ REPAIR_DESPECKLE = True
 # 去字後二次修復：清掉黏在修復區外緣的白邊、彩色描邊殘留（網點、畫面上也有效）
 REPAIR_RESIDUE_CLEANUP = True
 
+# 排版方向依整頁判斷：只讓明顯細長（長寬比 ≥ DIRECTION_CONFIDENT_ASPECT）的文字行投票，
+# 接近正方形的短字（あっ、♡）跟隨整頁主要方向；整頁無法判斷時用預設（日漫直排）
+PAGE_AWARE_TEXT_DIRECTION = True
+DIRECTION_CONFIDENT_ASPECT = 1.5
+DEFAULT_PAGE_TEXT_DIRECTION = 'v'
+
 # 自動字號不超過原文字號（由文字行寬度估算），讓譯文大小和原圖一致
 MATCH_SOURCE_FONT_SIZE = True
 
