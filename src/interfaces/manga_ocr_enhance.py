@@ -103,6 +103,21 @@ def _binarise(gray: Image.Image) -> Image.Image:
     return Image.fromarray(binary)
 
 
+def _squarer(gray: Image.Image, max_aspect: float = 2.0) -> Image.Image:
+    """Pad a long strip towards a square so the model's 224x224 resize distorts it less."""
+    width, height = gray.size
+    fill = _border_color(np.asarray(gray))
+    if width > height * max_aspect:
+        target = (width, round(width / max_aspect))
+    elif height > width * max_aspect:
+        target = (round(height / max_aspect), height)
+    else:
+        return _pad(gray)
+    canvas = Image.new("L", target, fill)
+    canvas.paste(gray, ((target[0] - width) // 2, (target[1] - height) // 2))
+    return canvas
+
+
 def candidate_views(image: Image.Image) -> list[tuple[str, Image.Image]]:
     """Cleaned-up versions of a crop for a second reading (the original is read first)."""
     gray = _dark_text_on_light(image.convert("L"))
@@ -110,6 +125,9 @@ def candidate_views(image: Image.Image) -> list[tuple[str, Image.Image]]:
         ("pad", _pad(gray)),
         ("contrast", _pad(ImageOps.autocontrast(gray, cutoff=2))),
         ("binary", _pad(_binarise(gray.filter(ImageFilter.MedianFilter(3))))),
+        ("square", _squarer(gray)),
+        # 空心字、細筆畫：加粗後比較像一般實心字
+        ("bold", _pad(gray.filter(ImageFilter.MinFilter(3)))),
     ]
     if min(gray.size) < 48:
         scale = 64 / max(min(gray.size), 1)
@@ -124,7 +142,7 @@ def best_reading(
     *,
     confident_score: float = -0.12,
     beams: int = 4,
-    max_views: int = 4,
+    max_views: int = 6,
 ) -> Reading:
     """Read once; if not confident, re-read cleaned views (and with beam search), keep the best."""
     first = read_scored(ocr, image)

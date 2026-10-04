@@ -181,15 +181,59 @@ def is_kanji(char: str) -> bool:
     return "一" <= char <= "鿿"
 
 
+def analyse(records: list[dict]) -> None:
+    """CER of every single view, of the oracle, and of selection strategies."""
+    chars = sum(r["len"] for r in records)
+    names = list(records[0]["views"])
+    print("\nper-view CER (all / horizontal / vertical):")
+    for name in names:
+        def cer(subset):
+            total = sum(r["len"] for r in subset)
+            return sum(r["views"][name][1] for r in subset) / max(total, 1)
+        horizontal = [r for r in records if not r["vertical"]]
+        vertical = [r for r in records if r["vertical"]]
+        print(f"  {name:<10}{cer(records):>7.1%}{cer(horizontal):>8.1%}{cer(vertical):>8.1%}")
+    oracle = sum(min(v[1] for v in r["views"].values()) for r in records) / chars
+    print(f"  {'oracle':<10}{oracle:>7.1%}")
+
+    def strategy(threshold, allowed, horizontal_first=None):
+        errors = 0
+        for r in records:
+            views = r["views"]
+            start = horizontal_first if (horizontal_first and not r["vertical"]) else "orig"
+            chosen = views[start]
+            if chosen[0] < threshold:
+                pool = [views[n] for n in allowed if n in views] + [chosen]
+                chosen = max(pool, key=lambda v: v[0])
+            errors += chosen[1]
+        return errors / chars
+
+    print("\nstrategies (threshold -> CER):")
+    sets = {
+        "all views": [n for n in names if n != "orig"],
+        "no beam": [n for n in names if n not in ("orig", "beam")],
+        "pad+square+bold": ["pad", "square", "bold"],
+        "square+bold+beam": ["square", "bold", "beam"],
+        "contrast+binary+square": ["contrast", "binary", "square"],
+    }
+    for label, allowed in sets.items():
+        row = "  ".join(f"{t:+.2f}:{strategy(t, allowed):.2%}" for t in (-0.02, -0.05, -0.08, -0.12, -0.2, -0.3))
+        print(f"  {label:<24}{row}")
+    for start in ("square", "pad"):
+        row = "  ".join(f"{t:+.2f}:{strategy(t, sets['all views'], start):.2%}" for t in (-0.05, -0.12, -0.2))
+        print(f"  horizontal starts {start:<7}{row}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("font_dir")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--save-dir")
+    parser.add_argument("--views", action="store_true", help="also read every view separately and compare strategies")
     args = parser.parse_args()
 
     from manga_ocr import MangaOcr
-    from src.interfaces.manga_ocr_enhance import best_reading, read_scored
+    from src.interfaces.manga_ocr_enhance import best_reading, candidate_views, read_scored
 
     fonts = fetch_fonts(Path(args.font_dir))
     ocr = MangaOcr(force_cpu=True)
@@ -210,6 +254,7 @@ def main() -> None:
     base_time = new_time = 0.0
     rescued = broke = changed = 0
     examples = []
+    records = []
     save_dir = Path(args.save_dir) if args.save_dir else None
     if save_dir:
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +278,16 @@ def main() -> None:
             totals[key][1] += base_errors
             totals[key][2] += new_errors
             totals[key][3] += 1
+        if args.views:
+            record = {"truth": truth, "len": len(truth), "vertical": vertical, "style": style, "font": font_name, "views": {}}
+            first = read_scored(ocr, image)
+            record["views"]["orig"] = (first.score, edit_distance(normalise(first.text), truth))
+            for name, view in candidate_views(image):
+                reading = read_scored(ocr, view, view=name)
+                record["views"][name] = (reading.score, edit_distance(normalise(reading.text), truth))
+            beam = read_scored(ocr, image, num_beams=4)
+            record["views"]["beam"] = (beam.score, edit_distance(normalise(beam.text), truth))
+            records.append(record)
         kanji_truth = [c for c in truth if is_kanji(c)]
         kanji[0] += len(kanji_truth)
         kanji[1] += sum(1 for c in kanji_truth if c not in normalise(base))
@@ -254,6 +309,8 @@ def main() -> None:
         print(f"{'kanji missed':<32}{kanji[0]:>7}{kanji[1] / kanji[0]:>11.1%}{kanji[2] / kanji[0]:>12.1%}")
     print("\nchanged readings:")
     print("\n".join(examples))
+    if records:
+        analyse(records)
 
 
 if __name__ == "__main__":

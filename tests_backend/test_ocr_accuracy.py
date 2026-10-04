@@ -16,7 +16,7 @@ def _fake_reader(scores_by_view, beam_score=None):
         calls.append((view, num_beams))
         if num_beams > 1:
             return Reading(f"{view}-beam", beam_score, view, num_beams)
-        return Reading(view, scores_by_view[view], view, 1)
+        return Reading(view, scores_by_view.get(view, -5.0), view, 1)
 
     return read, calls
 
