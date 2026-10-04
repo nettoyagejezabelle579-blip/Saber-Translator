@@ -145,3 +145,7 @@ Chinese on a laptop with no dedicated GPU (Samsung Galaxy Book3 Pro, Intel 13th-
 雙擊程式資料夾裡的 `Update-Saber.bat`：自動檢查 GitHub 上的新版，通常只下載小型更新包，
 只替換程式檔案；`data-v2`（書籍、翻譯結果、設定、API Key、術語表）完全不會被改動。
 私人倉庫第一次需要貼上唯讀存取權杖（詳見 README_FIRST.txt）。
+
+- **可續傳**：下載中途關掉視窗或斷線，再執行一次會從中斷處繼續；已下載、已解壓的分卷不會重新下載，
+  每個檔案下載後都會核對 SHA-256。暫存檔放在 `%TEMP%\saber-update`，更新完成後自動刪除。
+- 開始前會檢查暫存空間是否足夠；版本號（BUILD.json）最後才寫入，套用到一半被中斷也能再執行一次補完。

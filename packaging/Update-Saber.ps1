@@ -2,7 +2,8 @@
 # 只更新程式檔案；data-v2（書籍、設定、API Key、術語表）完全不會被改動。
 param(
     [switch]$Offline,                     # 不連 GitHub，只用下載資料夾裡的檔案
-    [string]$DownloadsDir = ''            # 預設為使用者的「下載」資料夾
+    [string]$DownloadsDir = '',           # 預設為使用者的「下載」資料夾
+    [string]$ReleaseFile = ''             # 測試用：從檔案讀取 Release 資訊
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -13,7 +14,8 @@ $Prefix = 'Saber-Translator-zhHant-CPU'
 $App = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DataDir = Join-Path $App 'data-v2'
 $TokenFile = Join-Path $DataDir 'github-token.txt'
-$Work = Join-Path $env:TEMP 'saber-update'
+# 下載中斷後再執行會從中斷處繼續：已下載／已解壓的分卷都保留在這裡，更新完成才刪除
+$WorkRoot = Join-Path $env:TEMP 'saber-update'
 
 function Say([string]$Message, [string]$Color = 'White') { Write-Host $Message -ForegroundColor $Color }
 function Stop-Update([string]$Message) { Say $Message 'Red'; exit 1 }
@@ -51,7 +53,11 @@ if (Test-Path $TokenFile) { $Token = (Get-Content $TokenFile -Raw).Trim() }
 $Release = $null
 try {
     if ($Offline) { throw 'offline' }
-    $Release = Get-Release $Token
+    if ($ReleaseFile) {
+        $Release = Get-Content $ReleaseFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } else {
+        $Release = Get-Release $Token
+    }
 } catch {
     if ($Offline) {
         Say '離線模式：使用下載資料夾裡的更新檔。'
@@ -77,57 +83,147 @@ try {
     }
 }
 
-function Get-Asset($Asset, [string]$Destination) {
-    $curlArgs = @('-L', '--fail', '--retry', '3', '-o', $Destination, '-H', 'User-Agent: Saber-Updater')
+function Invoke-Curl($Asset, [string]$Destination) {
+    # -C - ：檔案已有一部分時，從中斷處繼續下載
+    $curlArgs = @('-L', '--fail', '-C', '-', '-o', $Destination, '-H', 'User-Agent: Saber-Updater')
     if ($Token) {
         $curlArgs += @('-H', "Authorization: Bearer $Token", '-H', 'Accept: application/octet-stream', $Asset.url)
     } else {
         $curlArgs += $Asset.browser_download_url
     }
     & curl.exe @curlArgs
-    if ($LASTEXITCODE -ne 0) { throw "下載失敗：$($Asset.name)" }
 }
 
-if (Test-Path $Work) { Remove-Item $Work -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $Work | Out-Null
-$Staging = Join-Path $Work 'staging'
-New-Item -ItemType Directory -Force -Path $Staging | Out-Null
-$Zips = @()
+function Test-Asset($Asset, [string]$Path) {
+    $expected = [int64]$Asset.size
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if ($expected -gt 0 -and (Get-Item -LiteralPath $Path).Length -ne $expected) { return $false }
+    if ($Asset.digest -and "$($Asset.digest)".StartsWith('sha256:')) {
+        $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        return $hash -eq "$($Asset.digest)".Substring(7).ToLowerInvariant()
+    }
+    return $true
+}
+
+function Get-Asset($Asset, [string]$Destination) {
+    $expected = [int64]$Asset.size
+    if (Test-Path -LiteralPath $Destination) {
+        $have = (Get-Item -LiteralPath $Destination).Length
+        if ($expected -gt 0 -and $have -eq $expected -and (Test-Asset $Asset $Destination)) {
+            Say "$($Asset.name) 上次已下載完成，略過。" 'Green'
+            return
+        }
+        if ($expected -gt 0 -and $have -lt $expected -and $have -gt 0) {
+            Say ("繼續上次中斷的下載（已完成 {0:N0} / {1:N0} MB）..." -f ($have / 1MB), ($expected / 1MB))
+        } else {
+            Remove-Item -LiteralPath $Destination -Force
+        }
+    }
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        Invoke-Curl $Asset $Destination
+        $code = $LASTEXITCODE
+        if ($code -eq 33 -or $code -eq 36) {
+            # 伺服器不支援續傳：刪掉重新下載
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+            Invoke-Curl $Asset $Destination
+            $code = $LASTEXITCODE
+        }
+        if ($code -eq 0) {
+            if (Test-Asset $Asset $Destination) { return }
+            Say "$($Asset.name) 檔案不完整或已損壞，重新下載..." 'Yellow'
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        } elseif ($attempt -lt 5) {
+            Say "下載中斷（curl 代碼 $code），$($attempt * 5) 秒後從中斷處繼續..." 'Yellow'
+        }
+        if ($attempt -lt 5) { Start-Sleep -Seconds ($attempt * 5) }
+    }
+    Stop-Update "下載失敗：$($Asset.name)。請確認網路後再執行一次 Update-Saber.bat，已下載的部分會保留。"
+}
+
+function Assert-FreeSpace($Assets) {
+    # 暫存空間：尚未完成的分卷解壓後的大小，加上解壓時暫留的一個 zip
+    $pending = @($Assets | Where-Object { -not (Test-Path -LiteralPath ((Join-Path $Work $_.name) + '.done')) })
+    if ($pending.Count -eq 0) { return }
+    $sizes = @($pending | ForEach-Object { [int64]$_.size })
+    $needed = ($sizes | Measure-Object -Sum).Sum + ($sizes | Measure-Object -Maximum).Maximum + 512MB
+    $drive = $WorkRoot.Substring(0, 1)
+    $free = $null
+    try { $free = (Get-PSDrive -Name $drive -ErrorAction Stop).Free } catch { return }
+    if ($free -and $free -lt $needed) {
+        Stop-Update ("{0} 槽空間不足：更新需要約 {1:N1} GB 暫存空間，目前只剩 {2:N1} GB。請清出空間後再執行（已下載的部分會保留）。" -f $drive, ($needed / 1GB), ($free / 1GB))
+    }
+}
+
+function Use-WorkDir([string]$Name) {
+    # 只保留這一版的下載資料夾；其他版本（或舊版更新程式）留下的暫存檔都清掉
+    New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
+    Get-ChildItem -LiteralPath $WorkRoot -Force | Where-Object { $_.Name -ne $Name } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    $dir = Join-Path $WorkRoot $Name
+    New-Item -ItemType Directory -Force -Path (Join-Path $dir 'staging') | Out-Null
+    return $dir
+}
+
+# 下載（可續傳）→ 檢查 → 解壓 → 標記完成 → 刪掉 zip；中斷後再執行會跳過已完成的分卷
+function Get-AndExtract($Asset) {
+    $destination = Join-Path $Work $Asset.name
+    $doneMark = "$destination.done"
+    if (Test-Path -LiteralPath $doneMark) {
+        Say "$($Asset.name) 上次已下載並解壓縮，略過。" 'Green'
+        return
+    }
+    Say "下載 $($Asset.name)..."
+    Get-Asset $Asset $destination
+    Expand-Part $destination
+    Set-Content -LiteralPath $doneMark -Value 'ok'
+    Remove-Item -LiteralPath $destination -Force
+}
+
+function Expand-Part([string]$Zip) {
+    Say "解壓縮 $(Split-Path $Zip -Leaf)..."
+    & tar.exe -xf $Zip -C $Staging
+    if ($LASTEXITCODE -ne 0) { Stop-Update "解壓縮失敗：$Zip。請再執行一次 Update-Saber.bat。" }
+}
 
 if ($Release) {
     $assets = @{}
     foreach ($asset in $Release.assets) { $assets[$asset.name] = $asset }
+    New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
     $info = $null
     if ($assets.ContainsKey('update-info.json')) {
-        $infoPath = Join-Path $Work 'update-info.json'
+        $infoPath = Join-Path $WorkRoot 'update-info.json'
+        Remove-Item -LiteralPath $infoPath -Force -ErrorAction SilentlyContinue
         Get-Asset $assets['update-info.json'] $infoPath
         $info = Get-Content $infoPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Remove-Item -LiteralPath $infoPath -Force
     }
     $RemoteBuild = if ($info) { $info.build } else { ($Release.name -split ' ')[-1] }
     if ($LocalBuild -and $LocalBuild -eq $RemoteBuild) {
         Say "已經是最新版本（$LocalBuild），不需要更新。" 'Green'
+        Remove-Item $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
         exit 0
     }
+    $Work = Use-WorkDir ('build-' + ($RemoteBuild -replace '[^A-Za-z0-9._-]', '_'))
+    $Staging = Join-Path $Work 'staging'
     if ($info -and $LocalBuild -and $info.base -eq $LocalBuild -and $assets.ContainsKey("$Prefix-update.zip")) {
         $update = $assets["$Prefix-update.zip"]
-        Say ("下載小型更新包（{0} → {1}，約 {2:N0} MB）..." -f $LocalBuild, $RemoteBuild, ($update.size / 1MB))
-        $destination = Join-Path $Work $update.name
-        Get-Asset $update $destination
-        $Zips += $destination
+        Say ("小型更新包（{0} → {1}，約 {2:N0} MB）" -f $LocalBuild, $RemoteBuild, ($update.size / 1MB))
+        Assert-FreeSpace @($update)
+        Get-AndExtract $update
     } else {
         $parts = @($Release.assets | Where-Object { $_.name -like "$Prefix-part*.zip" } | Sort-Object name)
         if ($parts.Count -eq 0) { Stop-Update 'GitHub 上找不到更新檔，請稍後再試。' }
         $total = ($parts | Measure-Object -Property size -Sum).Sum / 1GB
         Say ("需要下載完整程式：{0} 個分卷，約 {1:N1} GB（書籍與設定會保留）。" -f $parts.Count, $total) 'Yellow'
-        foreach ($part in $parts) {
-            $destination = Join-Path $Work $part.name
-            Say "下載 $($part.name)..."
-            Get-Asset $part $destination
-            $Zips += $destination
-        }
+        Say '中途關掉視窗或斷線也沒關係：再執行一次會從中斷處繼續，已下載的分卷不會重新下載。'
+        Assert-FreeSpace $parts
+        foreach ($part in $parts) { Get-AndExtract $part }
     }
 } else {
-    # 離線：使用「下載」資料夾中手動下載的檔案
+    # 離線：使用「下載」資料夾中手動下載的檔案（不會刪除這些檔案）
+    $Work = Use-WorkDir 'offline'
+    $Staging = Join-Path $Work 'staging'
+    Remove-Item (Join-Path $Staging '*') -Recurse -Force -ErrorAction SilentlyContinue
     $downloads = if ($DownloadsDir) { $DownloadsDir } else { Join-Path $env:USERPROFILE 'Downloads' }
     $update = Get-ChildItem $downloads -Filter "$Prefix-update*.zip" -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -140,15 +236,9 @@ if ($Release) {
         Stop-Update '找不到更新檔。請到 GitHub Release 頁面下載所有 part*.zip（或 update.zip）到「下載」資料夾後再執行。'
     }
     Say "使用「下載」資料夾中的 $($Zips.Count) 個檔案更新。"
+    foreach ($zip in $Zips) { Expand-Part $zip }
 }
 
-# 4. 解壓縮（每解完一個就刪掉下載檔，節省磁碟空間）
-foreach ($zip in $Zips) {
-    Say "解壓縮 $(Split-Path $zip -Leaf)..."
-    & tar.exe -xf $zip -C $Staging
-    if ($LASTEXITCODE -ne 0) { Stop-Update "解壓縮失敗：$zip" }
-    if ($zip.StartsWith($Work)) { Remove-Item $zip -Force }
-}
 $Source = Join-Path $Staging 'Saber-Translator'
 if (-not (Test-Path $Source)) { Stop-Update '更新檔內容不正確。' }
 
@@ -156,15 +246,16 @@ $UpdateInfo = $null
 $UpdateInfoFile = Join-Path $Source 'UPDATE-INFO.json'
 if (Test-Path $UpdateInfoFile) {
     $UpdateInfo = Get-Content $UpdateInfoFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    Remove-Item $UpdateInfoFile -Force
     if ($UpdateInfo.base -ne $LocalBuild) {
+        Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
         Stop-Update "這個更新包只適用於 $($UpdateInfo.base) 版，你目前是 $LocalBuild 版。請改用完整分卷（part1、part2…）更新。"
     }
 }
 
-# 5. 套用：複製新檔案，完全排除 data-v2
-Say '套用更新中（data-v2 不會被改動）...'
-& robocopy.exe $Source $App /E /XD data-v2 /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+# 5. 套用：複製新檔案，完全排除 data-v2。
+# BUILD.json 最後才複製：中途關掉視窗時版本號仍是舊的，再執行一次會用暫存的檔案重新套用。
+Say '套用更新中（data-v2 不會被改動，請不要關閉視窗）...'
+& robocopy.exe $Source $App /E /XD data-v2 /XF BUILD.json UPDATE-INFO.json /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) {
     Stop-Update "複製檔案失敗（robocopy 代碼 $LASTEXITCODE）。請確認 Saber-Translator 已關閉後再執行一次。"
 }
@@ -175,7 +266,8 @@ if ($UpdateInfo -and $UpdateInfo.deleted) {
         if (Test-Path $target) { Remove-Item $target -Force }
     }
 }
-Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path (Join-Path $Source 'BUILD.json')) { Copy-Item (Join-Path $Source 'BUILD.json') $BuildFile -Force }
+Remove-Item $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 $NewBuild = ''
 if (Test-Path $BuildFile) { $NewBuild = (Get-Content $BuildFile -Raw | ConvertFrom-Json).build }

@@ -23,6 +23,13 @@ New-Tree "$Root\v2" 'new program' @('added.txt')
 # 中文檔名（實際程式內的字型就是中文檔名）也要能正確解壓與複製
 New-Item -ItemType Directory -Force -Path "$Root\v2\Saber-Translator\_internal\fonts" | Out-Null
 Set-Content -LiteralPath "$Root\v2\Saber-Translator\_internal\fonts\思源黑體-測試.ttf" 'font'
+# 兩個 50 KB 的「模型」，讓續傳測試能切成多個分卷
+$random = New-Object Random
+foreach ($name in 'model-a.bin', 'model-b.bin') {
+    $blob = New-Object byte[] 50000
+    $random.NextBytes($blob)
+    [IO.File]::WriteAllBytes("$Root\v2\Saber-Translator\_internal\$name", $blob)
+}
 New-Item -ItemType Directory -Force -Path "$Root\o1", "$Root\o2", "$Root\parts" | Out-Null
 Push-Location "$Root\o1"; python "$Repo\.github\scripts\make_update.py" "$Root\v1" aaa1111 $Prefix; Pop-Location
 Push-Location "$Root\o2"; python "$Repo\.github\scripts\make_update.py" "$Root\v2" bbb2222 $Prefix "$Root\o1\build-manifest.json"; Pop-Location
@@ -57,5 +64,60 @@ $full = New-Install 'install-full' $false
 powershell -NoProfile -ExecutionPolicy Bypass -File "$full\Update-Saber.ps1" -Offline -DownloadsDir "$Root\parts"
 if ($LASTEXITCODE -ne 0) { throw "full update failed ($LASTEXITCODE)" }
 Assert-Updated $full $false
+
+# 線上下載＋續傳：part1 上次已解壓完成（伺服器上沒有 part1，若重新下載就會失敗），
+# part2 只下載了一半（必須用 Range 從中斷處繼續），另一版留下的暫存資料夾要被清掉。
+New-Item -ItemType Directory -Force -Path "$Root\multi", "$Root\served" | Out-Null
+Push-Location "$Root\multi"; python "$Repo\.github\scripts\pack_parts.py" "$Root\v2" $Prefix 60000; Pop-Location
+$partFiles = @(Get-ChildItem "$Root\multi\$Prefix-part*.zip" | Sort-Object Name)
+if ($partFiles.Count -lt 2) { throw 'resume test needs at least two parts' }
+$port = 8765
+$releaseAssets = @($partFiles | ForEach-Object {
+    [ordered]@{
+        name = $_.Name
+        size = $_.Length
+        url = 'unused'
+        browser_download_url = "http://127.0.0.1:$port/$($_.Name)"
+        digest = 'sha256:' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+})
+ConvertTo-Json -Depth 5 @{ name = '繁中免安裝版 (CPU) bbb2222'; assets = $releaseAssets } |
+    Set-Content "$Root\release.json" -Encoding UTF8
+$partFiles | Select-Object -Skip 1 | Copy-Item -Destination "$Root\served"
+
+$tmp = Join-Path $Root 'tmp'
+$work = Join-Path $tmp 'saber-update\build-bbb2222'
+New-Item -ItemType Directory -Force -Path "$work\staging", "$tmp\saber-update\build-old" | Out-Null
+Set-Content "$tmp\saber-update\build-old\stale.zip" 'stale'
+& tar.exe -xf $partFiles[0].FullName -C "$work\staging"
+Set-Content "$work\$($partFiles[0].Name).done" 'ok'
+$bytes = [IO.File]::ReadAllBytes($partFiles[1].FullName)
+$half = [int]($bytes.Length / 2)
+[IO.File]::WriteAllBytes("$work\$($partFiles[1].Name)", [byte[]]$bytes[0..($half - 1)])
+
+$server = Start-Process python -ArgumentList @("$Repo\.github\scripts\range_server.py", "$Root\served", $port, "$Root\ranges.log") -PassThru -WindowStyle Hidden
+try {
+    for ($i = 0; $i -lt 50; $i++) {
+        try { Invoke-WebRequest "http://127.0.0.1:$port/$($partFiles[1].Name)" -Method Head -UseBasicParsing -TimeoutSec 2 | Out-Null; break }
+        catch { Start-Sleep -Milliseconds 200 }
+    }
+    $online = New-Install 'install-online' $false
+    $savedTemp = $env:TEMP
+    $env:TEMP = $tmp
+    try {
+        powershell -NoProfile -ExecutionPolicy Bypass -File "$online\Update-Saber.ps1" -ReleaseFile "$Root\release.json"
+        if ($LASTEXITCODE -ne 0) { throw "online resumed update failed ($LASTEXITCODE)" }
+        Assert-Updated $online $false
+        if (Test-Path "$tmp\saber-update") { throw 'download folder was not cleaned up' }
+        $ranges = Get-Content "$Root\ranges.log" -ErrorAction SilentlyContinue
+        if ($ranges -notcontains "$($partFiles[1].Name) $half") { throw "part2 was not resumed: $ranges" }
+        powershell -NoProfile -ExecutionPolicy Bypass -File "$online\Update-Saber.ps1" -ReleaseFile "$Root\release.json"
+        if ($LASTEXITCODE -ne 0) { throw "second run should report up to date ($LASTEXITCODE)" }
+    } finally {
+        $env:TEMP = $savedTemp
+    }
+} finally {
+    Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host 'Updater tests passed'
