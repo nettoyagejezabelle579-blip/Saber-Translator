@@ -412,11 +412,18 @@ class InteractivePageOperationService:
         )
         uses_auto_color = bool(style_defaults["useAutoTextColor"])
         old_text_color = payload["textColor"]
+        old_stroke_color = payload.get("strokeColor")
         if uses_auto_color and color.get("fg_color") is not None:
+            from src.core.text_color import contrast_stroke_color
+
             payload["textColor"] = rgb_to_hex(color["fg_color"])
+            payload["strokeColor"] = contrast_stroke_color(color["fg_color"])
         if uses_auto_color and color.get("bg_color") is not None:
             payload["fillColor"] = rgb_to_hex(color["bg_color"])
-        changes_render = payload["textColor"] != old_text_color
+        changes_render = (
+            payload["textColor"] != old_text_color
+            or payload.get("strokeColor") != old_stroke_color
+        )
         new_revision = int(page["document_revision"]) + 1
         has_drawable_text = any(
             _payload_text(

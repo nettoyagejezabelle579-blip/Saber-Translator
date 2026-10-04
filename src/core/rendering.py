@@ -674,8 +674,11 @@ def get_font(font_family_relative_path=constants.DEFAULT_FONT_RELATIVE_PATH, fon
     _font_cache[cache_key] = font
     return font
 
-# 文字行框的短邊通常比字身大一些（偵測框外擴 + 字距），換算回字號時乘上此係數
-SOURCE_FONT_SIZE_SCALE = 0.85
+# 文字行框短邊 ≈ 原文字號（與 manga-image-translator 相同做法）
+SOURCE_FONT_SIZE_SCALE = 1.0
+# 已知原文字號時，譯文可比原文字框多佔 30%（向兩側平均溢出到氣泡留白），
+# 避免中文多一列就整體縮小
+AUTO_FONT_OVERFLOW = 1.3
 
 
 def estimate_source_font_size(textlines) -> int | None:
@@ -697,84 +700,51 @@ def estimate_source_font_size(textlines) -> int | None:
 
 def calculate_auto_font_size(text, bubble_width, bubble_height, text_direction='vertical',
                              font_family_relative_path=constants.DEFAULT_FONT_RELATIVE_PATH,
-                             min_size=12, max_size=80, padding_ratio=1.0, textlines=None):
+                             min_size=12, max_size=160, padding_ratio=1.0, textlines=None):
     """
     使用二分法计算最佳字体大小。
-    
-    对于包含换行符的文本，会考虑换行符对布局的影响：
-    - 竖排模式：每个换行符代表一个新列
-    - 横排模式：每个换行符代表一个新行
 
-    提供 textlines 且 MATCH_SOURCE_FONT_SIZE 開啟時，字號不超過原文字號，
-    讓譯文大小與原圖一致（放不下時仍會縮小）。
+    与渲染器一致：竖排时每列字数由框高决定、列数占用框宽；横排时每行字数由框宽决定、
+    行数占用框高。换行符代表新列／新行。
+
+    提供 textlines 且 MATCH_SOURCE_FONT_SIZE 開啟時，以原文字號為目標（不超過原文），
+    並允許譯文比原文字框多佔 AUTO_FONT_OVERFLOW 倍，放不下才縮小。
     """
     if not text or not text.strip() or bubble_width <= 0 or bubble_height <= 0:
         return constants.DEFAULT_FONT_SIZE
+    overflow = 1.0
     if textlines and getattr(constants, "MATCH_SOURCE_FONT_SIZE", False):
         source_size = estimate_source_font_size(textlines)
         if source_size is not None:
-            max_size = max(min_size, min(max_size, source_size))
+            max_size = max(min_size, source_size)
+            overflow = AUTO_FONT_OVERFLOW
 
-    W = bubble_width * padding_ratio
-    H = bubble_height * padding_ratio
-    
-    # 处理换行符：分割成段落，计算每个段落的字符数
-    paragraphs = text.split('\n')
-    # 过滤空段落后计算实际字符数（不包含换行符）
-    paragraph_lengths = [len(p) for p in paragraphs if p]
-    N = sum(paragraph_lengths)  # 总字符数（不含换行符）
-    num_paragraphs = len(paragraph_lengths)  # 实际段落数
-    
-    if N == 0:
+    width = bubble_width * padding_ratio
+    height = bubble_height * padding_ratio
+
+    paragraph_lengths = [len(p) for p in text.split('\n') if p]
+    if not paragraph_lengths:
         return constants.DEFAULT_FONT_SIZE
-    
-    c_w = 1.0
+    num_paragraphs = len(paragraph_lengths)
     l_h = 1.05
 
     if text_direction == 'vertical':
-        W, H = H, W
+        along, across = height, width * overflow  # 每列沿框高排字，列數占框寬
+    else:
+        along, across = width, height * overflow  # 每行沿框寬排字，行數占框高
 
-    low = min_size
-    high = max_size
-    best_size = min_size
-
+    low, high, best_size = min_size, max_size, min_size
     while low <= high:
         mid = (low + high) // 2
-        if mid == 0: break
-
+        if mid == 0:
+            break
         get_font(font_family_relative_path, mid)
-
-        avg_char_width = mid * c_w
-        avg_char_height = mid
-
-        if text_direction == 'horizontal':
-            chars_per_line = max(1, int(W / avg_char_width)) if avg_char_width > 0 else N
-            # 考虑换行符：每个段落至少占一行
-            lines_needed = 0
-            for length in paragraph_lengths:
-                if length > 0:
-                    lines_needed += math.ceil(length / chars_per_line)
-                else:
-                    lines_needed += 1  # 空段落也占一行
-            # 至少需要 num_paragraphs 行（用户手动换行）
-            lines_needed = max(lines_needed, num_paragraphs)
-            total_height_needed = lines_needed * mid * l_h
-            fits = total_height_needed <= H
-        else: # vertical
-            chars_per_column = max(1, int(H / avg_char_height)) if avg_char_height > 0 else N
-            # 考虑换行符：每个段落至少占一列
-            columns_needed = 0
-            for length in paragraph_lengths:
-                if length > 0:
-                    columns_needed += math.ceil(length / chars_per_column)
-                else:
-                    columns_needed += 1  # 空段落也占一列
-            # 至少需要 num_paragraphs 列（用户手动换行）
-            columns_needed = max(columns_needed, num_paragraphs)
-            total_width_needed = columns_needed * mid * l_h
-            fits = total_width_needed <= W
-
-        if fits:
+        per_line = max(1, int(along / mid))
+        lines_needed = max(
+            num_paragraphs,
+            sum(math.ceil(length / per_line) for length in paragraph_lengths),
+        )
+        if lines_needed * mid * l_h <= across:
             best_size = mid
             low = mid + 1
         else:
@@ -1247,7 +1217,8 @@ def draw_multiline_text_vertical(draw, text, font, x, y, max_width, max_height,
     elif block_align == 'end':
         block_offset = block_space
     else:
-        block_offset = block_space / 2
+        # 置中：比框寬時向左右平均溢出（自動字號允許譯文稍大於原文字框）
+        block_offset = (max_width - block_width) / 2
 
     # x 是气泡右边界；竖排从右向左换列，因此逻辑块偏移需要向左扣除。
     current_x_base = x - block_offset
@@ -1607,7 +1578,8 @@ def draw_multiline_text_horizontal(draw, text, font, x, y, max_width, max_height
     elif block_align == 'end':
         block_offset = block_space
     else:
-        block_offset = block_space / 2
+        # 置中：比框高時向上下平均溢出
+        block_offset = (max_height - block_height) / 2
     current_y = y + block_offset
 
     # 预加载NotoSans字体，用于特殊字符

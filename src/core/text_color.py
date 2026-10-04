@@ -4,7 +4,8 @@
 48px OCR 的顏色預測要再跑一次完整的 OCR 束搜尋，在 CPU 上很慢，結果也常偏灰。
 這裡改成看像素：
 1. 文字區域 = 該氣泡所有文字行多邊形；背景 = 文字區域外圍一圈的中位數顏色。
-2. 文字區域內與背景差距夠大的像素視為筆畫，取差距最大的那部分（避開抗鋸齒邊緣）的中位數。
+2. 文字區域內與背景差距夠大的像素視為筆畫，取「筆畫正中央」（離筆畫邊緣最遠）像素的中位數：
+   彩色字加白邊時，白邊在外緣、字色在中央，不會誤判成白色；也避開抗鋸齒邊緣。
 3. 接近純黑／純白的結果直接定為 #000000／#FFFFFF。
 """
 
@@ -44,6 +45,24 @@ def _snap(color: np.ndarray) -> list[int]:
     return rgb
 
 
+def _stroke_center_color(crop, inside, background, threshold):
+    """取筆畫正中央的顏色。
+
+    彩色字常加白色（或黑色）描邊：描邊在每個字的外緣，字本身的顏色在筆畫中央。
+    以距離轉換找出離筆畫邊緣最遠的像素，避免把描邊誤認成文字顏色。
+    """
+    distance = np.linalg.norm(crop - background, axis=2)
+    ink = ((distance >= threshold) & (inside > 0)).astype(np.uint8)
+    if int(ink.sum()) < _MIN_STROKE_PIXELS:
+        return None
+    depth = cv2.distanceTransform(ink, cv2.DIST_L2, 3)
+    values = depth[ink > 0]
+    center = (ink > 0) & (depth >= max(1.0, float(np.percentile(values, 80))))
+    if int(center.sum()) < 4:
+        return None
+    return np.median(crop[center], axis=0)
+
+
 def measure_bubble_color(
     image: np.ndarray,
     coords: Sequence[int],
@@ -79,15 +98,24 @@ def measure_bubble_color(
     strokes = distance >= threshold
     if int(strokes.sum()) < _MIN_STROKE_PIXELS:
         return {"fg_color": None, "bg_color": _snap(background), "confidence": 0.0}
-    stroke_distance = distance[strokes]
-    core = text_pixels[strokes][stroke_distance >= np.percentile(stroke_distance, 60)]
-    foreground = np.median(core, axis=0)
+    foreground = _stroke_center_color(crop, inside, background, threshold)
+    if foreground is None:
+        stroke_distance = distance[strokes]
+        core = text_pixels[strokes][stroke_distance >= np.percentile(stroke_distance, 60)]
+        foreground = np.median(core, axis=0)
     confidence = float(min(1.0, np.linalg.norm(foreground - background) / 220.0))
     return {
         "fg_color": _snap(foreground),
         "bg_color": _snap(background),
         "confidence": round(confidence, 4),
     }
+
+
+def contrast_stroke_color(foreground) -> str:
+    """自動顏色時的描邊色：白／淺色字用黑邊，其他用白邊，譯文在畫面上才看得清楚。"""
+    r, g, b = (int(v) for v in foreground)
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#000000" if luminance >= 170 else "#FFFFFF"
 
 
 def measure_bubble_colors(

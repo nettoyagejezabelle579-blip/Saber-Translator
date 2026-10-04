@@ -2286,7 +2286,10 @@ class TranslationPipelineService:
             payload["autoBgColor"] = background
             payload["colorConfidence"] = color["confidence"]
             if uses_auto_color and foreground is not None:
+                from src.core.text_color import contrast_stroke_color
+
                 payload["textColor"] = rgb_to_hex(foreground)
+                payload["strokeColor"] = contrast_stroke_color(foreground)
             if uses_auto_color and background is not None:
                 payload["fillColor"] = rgb_to_hex(background)
         checkpoint = self._publish_bubble_update(

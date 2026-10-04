@@ -219,7 +219,8 @@ def test_rotation_preserves_text_that_enters_page_from_outside(angle, stroke_wid
         text_direction="vertical", text_color="#000000",
         stroke_enabled=stroke_width > 0, stroke_color="#FF0000",
         stroke_width=stroke_width, rotation_angle=angle,
-        inline_align="center", block_align="center",
+        # 置中時溢出會左右平均分配；用起始對齊讓文字從右緣向左溢出到頁面外
+        inline_align="center", block_align="start",
     )
     font = get_font(state.font_family, state.font_size)
     with Image.new("RGBA", (1200, 1200)) as reference:
