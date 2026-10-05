@@ -228,7 +228,10 @@ class DesktopController(QObject):
         self._open_web_url()
 
     def _open_web_url(self) -> None:
-        url = f"http://127.0.0.1:{self.settings.port}/"
+        from src.backend_v2.desktop.ui_language import active_language
+
+        # 網頁沿用控制中心的介面語言
+        url = f"http://127.0.0.1:{self.settings.port}/?lang={active_language()}"
         webbrowser.open_new(url)
         LOGGER.debug("已请求打开浏览器：%s", url)
 
@@ -610,6 +613,10 @@ def run_desktop(args: object) -> int:
 
     _configure_windows_app_identity()
     app = QApplication.instance() or QApplication([])
+    # 介面語言：預設繁體中文（台灣），可在設定改成简体中文
+    from src.backend_v2.desktop.ui_language import install_qt_conversion, read_language
+
+    install_qt_conversion(app, read_language(data_root))
     app.setApplicationName("Saber-Translator")
     app.setOrganizationName("SaberTranslator")
     app.setQuitOnLastWindowClosed(False)

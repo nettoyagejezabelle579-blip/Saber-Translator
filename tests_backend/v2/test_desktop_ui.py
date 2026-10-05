@@ -150,7 +150,8 @@ def test_settings_emit_immediately_without_a_save_button(tmp_path) -> None:
 
     page.pet_enabled.click()
 
-    assert changes[-1].pet_enabled is False
+    # 桌寵預設關閉，點一下變成開啟
+    assert changes[-1].pet_enabled is (not DesktopSettings().pet_enabled)
     assert "保存设置" not in [button.text() for button in page.findChildren(QPushButton)]
 
 
@@ -184,8 +185,10 @@ def test_browser_extension_controls_emit_and_regenerate_a_masked_token(tmp_path)
     assert changes[-1].browser_extension_token == regenerated
 
 
-def test_settings_page_emits_resident_models_in_catalog_order(tmp_path) -> None:
+def test_settings_page_emits_resident_models_in_catalog_order(tmp_path, monkeypatch) -> None:
     _app()
+    # 測試環境沒有模型檔；假裝都已內附，否則開關會被停用
+    monkeypatch.setattr("src.backend_v2.desktop.window.local_model_available", lambda _model: True)
     page = SettingsPage(
         DesktopSettings(resident_models=("paddle_ocr",)),
         tmp_path,
@@ -365,13 +368,13 @@ def test_desktop_auto_opens_browser_only_once_but_keeps_manual_open(
         LauncherStatus(LauncherState.RUNNING, "再次启动完成")
     )
 
-    expected_automatic = ["http://127.0.0.1:5000/"] if auto_open else []
+    expected_automatic = ["http://127.0.0.1:5000/?lang=zh-TW"] if auto_open else []
     assert opened == expected_automatic
     assert task_starts == ["http://127.0.0.1:5000"] * 3
 
     controller.open_web()
 
-    assert opened == [*expected_automatic, "http://127.0.0.1:5000/"]
+    assert opened == [*expected_automatic, "http://127.0.0.1:5000/?lang=zh-TW"]
     controller._pet_timer.stop()
     controller.tray.hide()
     controller.pet.close()
@@ -1003,3 +1006,52 @@ def test_window_close_requests_quit_when_system_tray_is_unavailable(tmp_path: Pa
     window.allow_close()
     window.deleteLater()
     app.processEvents()
+
+
+def test_settings_page_saves_the_interface_language(tmp_path) -> None:
+    from src.backend_v2.desktop.ui_language import read_language
+
+    _app()
+    page = SettingsPage(DesktopSettings(), tmp_path)
+    assert page.ui_language.currentData() == "zh-TW"  # 預設繁體中文
+    page.ui_language.setCurrentIndex(page.ui_language.findData("zh-CN"))
+    assert read_language(tmp_path) == "zh-CN"
+    assert "重新打开" in page.ui_language_note.text()
+
+
+def test_traditional_interface_converts_every_qt_text(tmp_path) -> None:
+    """在獨立的行程裡跑（會改動 Qt 類別），確認整個控制中心顯示繁體。"""
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""\
+        import os, sys
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        sys.path.insert(0, {str(PROJECT_ROOT)!r})
+        from pathlib import Path
+        from PySide6.QtWidgets import QApplication, QLabel, QAbstractButton, QComboBox, QMenu, QMessageBox
+        from src.backend_v2.desktop.ui_language import install_qt_conversion
+        app = QApplication([])
+        install_qt_conversion(app, "zh-TW")
+        from src.backend_v2.desktop.settings import DesktopSettings
+        from src.backend_v2.desktop.window import SettingsPage, TaskCenterPage
+        page = SettingsPage(DesktopSettings(), Path({str(tmp_path)!r}))
+        page.show(); app.processEvents()
+        texts = [w.text() for w in page.findChildren(QLabel)] + [w.text() for w in page.findChildren(QAbstractButton)]
+        menu = QMenu(); menu.addAction("打开网页"); menu.addAction("退出")
+        texts += [a.text() for a in menu.actions()]
+        later = QLabel(); later.setText("正在启动后端"); texts.append(later.text())
+        print(chr(10).join(texts))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, encoding="utf-8", timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    output = result.stdout
+    for traditional in ("自動儲存", "設定", "開啟網頁", "正在啟動後端", "語言"):
+        assert traditional in output, traditional
+    for simplified in ("自动保存", "设置", "打开网页", "启动后端"):
+        assert simplified not in output, simplified

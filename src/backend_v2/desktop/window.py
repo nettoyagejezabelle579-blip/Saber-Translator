@@ -47,6 +47,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.backend_v2.desktop.ui_language import (
+    LANGUAGE_LABELS,
+    LANGUAGES,
+    active_language,
+    read_language,
+    ui_text,
+    write_language,
+)
 from src.backend_v2.desktop.settings import DesktopSettings, LOG_LEVELS, PET_SCALES
 from src.backend_v2.launcher.entrypoint import LauncherState, LauncherStatus
 from src.backend_v2.local_models import LOCAL_MODEL_OPTIONS, local_model_available
@@ -515,7 +523,7 @@ class TaskCenterPage(QWidget):
                 str(job.get("createdAt") or "—").replace("T", " ")[:19],
             )
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                item = QTableWidgetItem(ui_text(value))
                 if column in {1, 3}:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 table.setItem(row, column, item)
@@ -1024,6 +1032,29 @@ class SettingsPage(QWidget):
             pet_rows,
         )
         layout.addWidget(pet_card)
+
+        # 介面語言（控制中心與網頁）：存在 data-v2/ui-language.txt，重新開啟後套用
+        self._data_root = data_root
+        self.ui_language = QComboBox()
+        for code in LANGUAGES:
+            self.ui_language.addItem(LANGUAGE_LABELS[code], code)
+        self.ui_language.setFixedWidth(190)
+        current_language = read_language(data_root)
+        self.ui_language.setCurrentIndex(LANGUAGES.index(current_language))
+        self.ui_language_note = _label("", "settingsHint")
+        language_card, _language_description = _settings_card(
+            "界面语言",
+            "控制中心与网页的显示语言。",
+            (
+                _setting_row(
+                    "显示语言",
+                    "默认繁体中文（台湾）；修改后重新打开 Saber-Translator 生效，网页重新整理即可",
+                    self.ui_language,
+                ),
+            ),
+        )
+        layout.addWidget(language_card)
+        layout.addWidget(self.ui_language_note)
         layout.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
@@ -1045,6 +1076,22 @@ class SettingsPage(QWidget):
         self.pet_enabled.toggled.connect(self._emit_settings)
         self.pet_top.toggled.connect(self._emit_settings)
         self.pet_scale.currentTextChanged.connect(self._emit_settings)
+        self.ui_language.currentIndexChanged.connect(self._save_ui_language)
+
+    def _save_ui_language(self, *_args: object) -> None:
+        code = self.ui_language.currentData()
+        if code not in LANGUAGES:
+            return
+        try:
+            write_language(self._data_root, code)
+        except OSError as error:
+            self.ui_language_note.setText(f"无法保存界面语言：{error}")
+            return
+        self.ui_language_note.setText(
+            "已保存。重新打开 Saber-Translator 后套用；网页请重新打开或在网页设置中切换。"
+            if code != active_language()
+            else ""
+        )
 
     def _emit_settings(self, *_args: object) -> None:
         if self._applying:
