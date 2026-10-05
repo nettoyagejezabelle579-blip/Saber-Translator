@@ -2,17 +2,9 @@
 # 內附全部模型；因單一檔案上限 2 GiB，分成數個普通 zip，全部解壓到同一資料夾即可使用
 name: Portable zh-Hant CPU build
 
+# 只在手動觸發時建置與發布：每次發布都要刻意進行，避免推送程式碼時意外發布
+# （小更新只適用於前一版，意外多發一版會讓使用者需要下載完整程式）
 on:
-  push:
-    branches:
-      - claude/saber-translation-upgrade-ut9pti
-    paths-ignore:
-      - '**.md'
-      - 'tests_backend/**'
-      - 'vue-frontend/tests/**'
-      - '.github/workflows/verify-updater.yml'
-      - '.github/workflows/eval-ocr.yml'
-      - '.github/scripts/eval_ocr.py'
   workflow_dispatch:
 
 permissions:
