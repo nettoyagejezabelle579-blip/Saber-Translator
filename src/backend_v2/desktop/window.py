@@ -599,7 +599,9 @@ class LogPage(QWidget):
         self.level_filter.addItem("错误", "ERROR")
         self.level_filter.setMinimumWidth(128)
         self.category_filter = QComboBox()
-        self.category_filter.addItems(tuple(LOG_CATEGORY_FILTERS))
+        # 用項目資料存原本的分類名稱；顯示文字可能已轉成繁體
+        for name in LOG_CATEGORY_FILTERS:
+            self.category_filter.addItem(name, name)
         self.category_filter.setMinimumWidth(128)
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索日志")
@@ -637,7 +639,7 @@ class LogPage(QWidget):
         layout.addWidget(self.output, 1)
         self.source_filter.currentTextChanged.connect(self._render)
         self.level_filter.currentTextChanged.connect(self._render)
-        self.category_filter.currentTextChanged.connect(self._render)
+        self.category_filter.currentIndexChanged.connect(self._render)
         self.search.textChanged.connect(self._render)
         self.auto_scroll.toggled.connect(self._schedule_auto_scroll)
         clear.clicked.connect(self.clear)
@@ -802,9 +804,10 @@ class LogPage(QWidget):
     ) -> bool:
         selected_source = str(self.source_filter.currentData() or "")
         selected_level = str(self.level_filter.currentData() or "")
-        selected_categories = LOG_CATEGORY_FILTERS[
-            self.category_filter.currentText()
-        ]
+        selected_categories = LOG_CATEGORY_FILTERS.get(
+            str(self.category_filter.currentData() or ""),
+            None,
+        )
         needle = self.search.text().strip().lower()
         return (
             (not selected_source or selected_source == source)

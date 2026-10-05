@@ -1071,3 +1071,38 @@ def test_ui_text_changes_only_the_characters(monkeypatch) -> None:
     assert ui_language.LANGUAGE_LABELS["zh-TW"] == "繁體中文"
     monkeypatch.setattr(ui_language, "_active", "zh-CN")
     assert ui_language.ui_text("新建章节") == "新建章节"
+
+
+def test_log_page_works_with_the_traditional_interface() -> None:
+    """回報的閃退：分類選單顯示文字轉成繁體（工作日誌）後，用它查表會 KeyError。"""
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""\
+        import os, sys
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        sys.path.insert(0, {str(PROJECT_ROOT)!r})
+        from PySide6.QtWidgets import QApplication
+        from src.backend_v2.desktop.ui_language import install_qt_conversion
+        app = QApplication([])
+        install_qt_conversion(app, "zh-TW")
+        from src.backend_v2.desktop.window import LogPage, LOG_CATEGORY_FILTERS
+        page = LogPage()
+        page.show(); app.processEvents()
+        shown = [page.category_filter.itemText(i) for i in range(page.category_filter.count())]
+        for index in range(page.category_filter.count()):
+            page.category_filter.setCurrentIndex(index)
+            page.add_line("DESKTOP", "2026-10-05 14:38:14 [启动器] [系统] 桌面控制中心已启动")
+            page.add_line("API", "[INFO] 工作日志 测试")
+        print("SHOWN", "|".join(shown))
+        print("OK", len(page._lines))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, encoding="utf-8", timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout
+    assert "工作日志" not in result.stdout.split("SHOWN", 1)[1].split("\n", 1)[0]
