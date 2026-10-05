@@ -253,3 +253,30 @@ def test_stop_requested_before_run_is_not_lost(tmp_path) -> None:
         LauncherState.STOPPED,
     ]
     assert not (tmp_path / "data").exists()
+
+
+def test_slow_child_start_keeps_its_epoch_valid(tmp_path, monkeypatch) -> None:
+    """回報的錯誤：Worker 啟動超過租約時間（更新後首次開啟、防毒掃描）就因 epoch 過期而退出。"""
+    import time
+
+    import src.backend_v2.launcher.entrypoint as launcher
+    from src.backend_v2.storage.database import create_sqlite_engine
+    from src.backend_v2.storage.epochs import ProcessEpochRepository
+    from src.backend_v2.storage.schema import metadata
+
+    engine = create_sqlite_engine(tmp_path / "saber.sqlite3")
+    metadata.create_all(engine)
+    repository = ProcessEpochRepository(engine, lease_seconds=3)
+    monkeypatch.setattr(launcher, "STARTUP_LEASE_RENEW_SECONDS", 0.5)
+
+    kept = _new_registration("worker")
+    repository.register(kept)
+    with launcher._StartupLeaseKeeper(repository, kept):
+        time.sleep(4.5)  # 比租約長：子行程還在載入
+        assert repository.validate(role="worker", epoch_id=kept.epoch_id, token=kept.token)
+
+    unkept = _new_registration("worker")
+    repository.register(unkept)
+    time.sleep(3.5)
+    assert not repository.validate(role="worker", epoch_id=unkept.epoch_id, token=unkept.token)
+    engine.dispose()

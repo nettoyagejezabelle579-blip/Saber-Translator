@@ -659,6 +659,49 @@ def _reconcile_all_previous_epochs(repository: ProcessEpochRepository) -> None:
         )
 
 
+STARTUP_LEASE_RENEW_SECONDS = 2.0
+
+
+class _StartupLeaseKeeper:
+    """Keep a child's epoch lease alive while the child is still starting.
+
+    The lease is short (a few seconds) and the child renews it itself only
+    after it has started. A slow start -- first launch after an update while
+    Windows Defender scans the new files, a busy CPU laptop -- used to let the
+    lease expire before the child checked it, and the child exited with
+    "Launcher-issued ... epoch is missing, expired, or invalid".
+    """
+
+    def __init__(self, repository: ProcessEpochRepository, registration: EpochRegistration) -> None:
+        self._repository = repository
+        self._registration = registration
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"v2-{registration.role}-startup-lease",
+            daemon=True,
+        )
+
+    def __enter__(self) -> "_StartupLeaseKeeper":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        while not self._stop.wait(STARTUP_LEASE_RENEW_SECONDS):
+            try:
+                self._repository.renew(
+                    role=self._registration.role,  # type: ignore[arg-type]
+                    epoch_id=self._registration.epoch_id,
+                    token=self._registration.token,
+                )
+            except Exception:  # 資料庫忙碌時下一輪再續；子行程啟動後會自己續約
+                LOGGER.debug("啟動期間續約 epoch 失敗，稍後重試", exc_info=True)
+
+
 def _start_child(
     *,
     role: str,
@@ -682,8 +725,11 @@ def _start_child(
     registration = _new_registration(role)
     started_at = time.monotonic()
     process: subprocess.Popen[str] | None = None
+    lease_keeper: _StartupLeaseKeeper | None = None
     try:
         repository.register(registration)
+        # 子行程啟動完成前由啟動器續約，慢速啟動不會讓 epoch 過期
+        lease_keeper = _StartupLeaseKeeper(repository, registration).__enter__()
         LOGGER.debug(
             "正在启动 %s 子进程（epoch=%s，restart=%s）",
             role.upper(),
@@ -743,6 +789,9 @@ def _start_child(
                 stop_event=stop_event,
             )
     except BaseException as error:
+        if lease_keeper is not None:
+            lease_keeper.__exit__(None, None, None)
+            lease_keeper = None
         if isinstance(error, _LauncherStopRequested):
             LOGGER.debug(
                 "正在取消 %s 子进程启动（epoch=%s）",
@@ -762,6 +811,8 @@ def _start_child(
         else:
             repository.reconcile_dead_worker(registration.epoch_id)
         raise
+    if lease_keeper is not None:
+        lease_keeper.__exit__(None, None, None)
     LOGGER.debug(
         "%s 子进程已就绪：pid=%s，epoch=%s，耗时=%.2fs",
         role.upper(),
