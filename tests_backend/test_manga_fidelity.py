@@ -81,6 +81,76 @@ def test_outlined_colored_text_reports_fill_not_outline(bg, fill, stroke, width)
     assert measure_bubble_color(image, (60, 20, 160, 340), [line])["fg_color"] == list(fill)
 
 
+def _draw_outlined_block(bg, fill, stroke, stroke_width, glow=None, text="これは", size=56):
+    """多欄直書，可加外光暈：字縫間露出背景（使用者回報的粉紅字白框案例）。"""
+    from PIL import ImageDraw, ImageFilter, ImageFont
+
+    font = ImageFont.truetype(
+        "src/backend_v2/resources/fonts/思源黑体SourceHanSansK-Bold.TTF", size
+    )
+    image = Image.new("RGB", (300, 360), bg)
+    if glow is not None:
+        halo = Image.new("L", image.size, 0)
+        halo_draw = ImageDraw.Draw(halo)
+        for column in range(3):
+            for row, char in enumerate(text):
+                halo_draw.text((200 - column * 75, 30 + row * 95), char, font=font, fill=255,
+                               stroke_width=stroke_width + 8, stroke_fill=255)
+        halo = halo.filter(ImageFilter.GaussianBlur(6))
+        image.paste(Image.new("RGB", image.size, glow), mask=halo)
+    draw = ImageDraw.Draw(image)
+    for column in range(3):
+        for row, char in enumerate(text):
+            draw.text((200 - column * 75, 30 + row * 95), char, font=font, fill=fill,
+                      stroke_width=stroke_width, stroke_fill=stroke)
+    lines = [_vertical_line(190 - column * 75, 20, 270 - column * 75, 330) for column in range(3)]
+    return np.asarray(image), lines
+
+
+def _close(measured, expected, tolerance=40):
+    return measured is not None and all(abs(a - b) <= tolerance for a, b in zip(measured, expected))
+
+
+@pytest.mark.parametrize(("bg", "fill", "stroke", "width", "glow", "text"), [
+    # 使用者回報：粉紅字＋粗白框＋粉紅光暈，灰色畫面（以前變成黑字）
+    ((90, 85, 88), (252, 89, 153), (255, 255, 255), 6, (240, 200, 215), "これは"),
+    ((183, 180, 180), (252, 89, 153), (255, 255, 255), 6, (232, 210, 214), "あんた"),
+    # 黑字白框放在灰色畫面上
+    ((110, 110, 110), (0, 0, 0), (255, 255, 255), 6, None, "これは"),
+    # 白字黑框放在彩色畫面上
+    ((60, 120, 200), (255, 255, 255), (0, 0, 0), 5, None, "あんた"),
+    # 一般黑字白底，有很多封閉的洞（口、回、日）
+    ((255, 255, 255), (0, 0, 0), (0, 0, 0), 0, None, "回口日"),
+    # 白字黑底
+    ((0, 0, 0), (255, 255, 255), (255, 255, 255), 0, None, "回口日"),
+])
+def test_text_color_follows_layers_from_outside_in(bg, fill, stroke, width, glow, text):
+    from src.core.text_color import measure_bubble_color
+
+    image, lines = _draw_outlined_block(bg, fill, stroke, width, glow, text)
+    measured = measure_bubble_color(image, (30, 20, 280, 330), lines)["fg_color"]
+    assert _close(measured, fill), (measured, fill)
+
+
+def test_text_color_on_screentone():
+    from PIL import ImageDraw, ImageFont
+    from src.core.text_color import measure_bubble_color
+
+    image = Image.new("RGB", (240, 360), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    for y in range(0, 360, 6):
+        for x in range(0, 240, 6):
+            draw.ellipse((x, y, x + 2, y + 2), fill=(90, 90, 90))
+    font = ImageFont.truetype("src/backend_v2/resources/fonts/思源黑体SourceHanSansK-Bold.TTF", 56)
+    for row, char in enumerate("ちがう"):
+        draw.text((90, 30 + row * 95), char, font=font, fill=(0, 0, 0),
+                  stroke_width=5, stroke_fill=(255, 255, 255))
+    measured = measure_bubble_color(
+        np.asarray(image), (70, 20, 170, 330), [_vertical_line(80, 20, 160, 330)]
+    )["fg_color"]
+    assert measured == [0, 0, 0]
+
+
 def test_light_text_gets_dark_outline():
     from src.core.text_color import contrast_stroke_color
 
