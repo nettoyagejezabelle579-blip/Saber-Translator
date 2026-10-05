@@ -1,9 +1,9 @@
 /**
- * 介面語言：預設繁體中文（台灣），可切換回简体中文。
+ * 介面語言：預設繁體中文，可切換回简体中文。
  *
- * 介面原文是简体中文。選擇 zh-TW 時，用 OpenCC（cn → twp，含台灣用語：设置→設定、
- * 文件→檔案、加载→載入）把畫面上的文字節點與 placeholder / title / aria-label / alt
- * 即時轉成繁體；Vue 之後更新的文字也會被轉換。
+ * 介面原文是简体中文。選擇 zh-TW 時，用 OpenCC（cn → tw）把畫面上的文字節點與
+ * placeholder / title / aria-label / alt 即時轉成繁體字；只換字、詞語不變
+ * （设置→設置、视频→視頻），不換成地區用語。Vue 之後更新的文字也會被轉換。
  *
  * 不轉換：輸入框與文字區的內容、contenteditable，以及標了 data-no-convert 或
  * translate="no" 的元素（書名、章節名、原文日文等使用者內容）。
@@ -12,7 +12,7 @@
 export type UiLanguage = 'zh-TW' | 'zh-CN'
 
 export const UI_LANGUAGES: ReadonlyArray<{ code: UiLanguage; label: string }> = [
-  { code: 'zh-TW', label: '繁體中文（台灣）' },
+  { code: 'zh-TW', label: '繁體中文' },
   { code: 'zh-CN', label: '简体中文' },
 ]
 
@@ -22,26 +22,6 @@ const CONVERTED_ATTRIBUTES = ['placeholder', 'title', 'aria-label', 'alt', 'aria
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE', 'NOSCRIPT'])
 const OPT_OUT_SELECTOR = '[data-no-convert], [translate="no"], [contenteditable=""], [contenteditable="true"]'
 const HAN = /[㐀-鿿]/
-
-// OpenCC 只換字、沒換到的大陸介面用語，轉換後再換成台灣說法（桌面 ui_language.py 有同一份）
-export const TW_UI_TERMS: ReadonlyArray<readonly [string, string]> = [
-  ["(?<!重)新建", "新增"],
-  ["居中", "置中"],
-  ["文本", "文字"],
-  ["配置", "設定"],
-  ["教程", "教學"],
-  ["當前", "目前"],
-  ["撤銷", "復原"],
-  ["賬號", "帳號"],
-  ["賬戶", "帳戶"],
-  ["質量", "品質"],
-  ["模板", "範本"],
-  ["影象", "影像"],
-  ["畫素", "像素"],
-  ["反饋", "回饋"],
-  ["(?<![接線])埠", "連接埠"],
-]
-const TW_UI_TERM_PATTERNS = TW_UI_TERMS.map(([pattern, replacement]) => [new RegExp(pattern, 'g'), replacement] as const)
 
 let convert: ((text: string) => string) | null = null
 let observer: MutationObserver | null = null
@@ -88,8 +68,7 @@ export function convertUiText(text: string): string {
   if (!convert || !HAN.test(text)) return text
   const cached = cache.get(text)
   if (cached !== undefined) return cached
-  let converted = convert(text)
-  for (const [pattern, replacement] of TW_UI_TERM_PATTERNS) converted = converted.replace(pattern, replacement)
+  const converted = convert(text)
   if (cache.size > 20000) cache.clear()
   cache.set(text, converted)
   return converted
@@ -180,7 +159,7 @@ export async function startUiLanguage(): Promise<UiLanguage> {
   if (language !== 'zh-TW') return language
   try {
     const OpenCC = await import('opencc-js/cn2t')
-    convert = OpenCC.Converter({ from: 'cn', to: 'twp' })
+    convert = OpenCC.Converter({ from: 'cn', to: 'tw' })
   } catch (error) {
     console.warn('無法載入繁體中文轉換，介面以原文顯示', error)
     return language

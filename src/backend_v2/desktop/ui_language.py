@@ -1,9 +1,9 @@
 """Interface language for the desktop control centre (Traditional Chinese by default).
 
 The interface is written in Simplified Chinese. With ``zh-TW`` (the default)
-every text shown by Qt is converted with OpenCC ``s2twp`` (Simplified ->
-Taiwan Traditional, including Taiwan wording such as 设置 -> 設定). ``zh-CN``
-shows the original text.
+every text shown by Qt is converted with OpenCC ``s2tw``: only the characters
+change (设置 -> 設置, 视频 -> 視頻); the words stay the same, no regional
+vocabulary is swapped in. ``zh-CN`` shows the original text.
 
 The choice lives in ``data-v2/ui-language.txt`` so the strict desktop settings
 file is untouched; the web interface gets the same choice through ``?lang=``
@@ -22,28 +22,9 @@ LOGGER = logging.getLogger("saber.desktop.language")
 TRADITIONAL = "zh-TW"
 SIMPLIFIED = "zh-CN"
 LANGUAGES = (TRADITIONAL, SIMPLIFIED)
-LANGUAGE_LABELS = {TRADITIONAL: "繁體中文（台灣）", SIMPLIFIED: "简体中文"}
+LANGUAGE_LABELS = {TRADITIONAL: "繁體中文", SIMPLIFIED: "简体中文"}
 LANGUAGE_FILE = "ui-language.txt"
 _HAN = re.compile(r"[㐀-鿿]")
-# OpenCC 只換字、沒換到的大陸介面用語，轉換後再換成台灣說法（網頁 uiLanguage.ts 有同一份）
-TW_UI_TERMS = (
-    ('(?<!重)新建', '新增'),
-    ('居中', '置中'),
-    ('文本', '文字'),
-    ('配置', '設定'),
-    ('教程', '教學'),
-    ('當前', '目前'),
-    ('撤銷', '復原'),
-    ('賬號', '帳號'),
-    ('賬戶', '帳戶'),
-    ('質量', '品質'),
-    ('模板', '範本'),
-    ('影象', '影像'),
-    ('畫素', '像素'),
-    ('反饋', '回饋'),
-    ('(?<![接線])埠', '連接埠'),
-)
-_TW_UI_TERMS = tuple((re.compile(pattern), replacement) for pattern, replacement in TW_UI_TERMS)
 
 _active = TRADITIONAL
 
@@ -69,10 +50,11 @@ def active_language() -> str:
 
 
 def _converter():
-    # 與譯文簡轉繁共用同一個 OpenCC（沒裝套件時用內附副本）；載入失敗就照常顯示原文
+    # 與譯文簡轉繁共用同一個 OpenCC（沒裝套件時用內附副本）；載入失敗就照常顯示原文。
+    # s2tw：只換字（為、裡等常用繁體字形），不換成地區用語
     from src.shared.zh_hant import _converter as shared_converter
 
-    return shared_converter("s2twp")
+    return shared_converter("s2tw")
 
 
 @lru_cache(maxsize=8192)
@@ -80,10 +62,7 @@ def _convert_cached(text: str) -> str:
     converter = _converter()
     if converter is None:
         return text
-    converted = converter.convert(text)
-    for pattern, replacement in _TW_UI_TERMS:
-        converted = pattern.sub(replacement, converted)
-    return converted
+    return converter.convert(text)
 
 
 def ui_text(text):

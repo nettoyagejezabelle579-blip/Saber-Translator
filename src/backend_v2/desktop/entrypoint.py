@@ -613,7 +613,7 @@ def run_desktop(args: object) -> int:
 
     _configure_windows_app_identity()
     app = QApplication.instance() or QApplication([])
-    # 介面語言：預設繁體中文（台灣），可在設定改成简体中文
+    # 介面語言：預設繁體中文，可在設定改成简体中文
     from src.backend_v2.desktop.ui_language import install_qt_conversion, read_language
 
     install_qt_conversion(app, read_language(data_root))

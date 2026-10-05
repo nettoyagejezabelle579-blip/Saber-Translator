@@ -26,7 +26,7 @@ describe('interface language', () => {
     document.body.innerHTML = ''
   })
 
-  it('defaults to Traditional Chinese (Taiwan) and converts the page', async () => {
+  it('defaults to Traditional Chinese and converts only the characters', async () => {
     document.body.innerHTML = `
       <h1>设置</h1>
       <button title="打开文件夹" aria-label="新建章节">保存</button>
@@ -43,17 +43,17 @@ describe('interface language', () => {
     expect(currentUiLanguage()).toBe('zh-TW')
     await startUiLanguage()
     expect(document.documentElement.lang).toBe('zh-TW')
-    expect(document.querySelector('h1')!.textContent).toBe('設定')
+    expect(document.querySelector('h1')!.textContent).toBe('設置')
     const button = document.querySelector('button')!
-    expect(button.textContent).toBe('儲存')
-    expect(button.title).toBe('開啟資料夾')
-    expect(button.getAttribute('aria-label')).toBe('新增章節')
+    expect(button.textContent).toBe('保存')
+    expect(button.title).toBe('打開文件夾')
+    expect(button.getAttribute('aria-label')).toBe('新建章節')
     const input = search
-    expect(input.placeholder).toBe('搜尋書籍')
+    expect(input.placeholder).toBe('搜索書籍')
     expect(input.value).toBe('简体输入不要改')
     expect(editor.value).toBe('原文：国语')
     expect(document.querySelector('[data-no-convert]')!.textContent).toBe('進撃の巨人 国語版')
-    expect(document.querySelector('p')!.textContent).toBe('文字塊對齊：置中')
+    expect(document.querySelector('p')!.textContent).toBe('文本塊對齊：居中')
     expect(document.title).toBe('漫畫翻譯')
 
     // 之後才出現或更新的文字也會轉換
@@ -61,10 +61,10 @@ describe('interface language', () => {
     toast.textContent = '加载失败，请检查网络'
     document.body.appendChild(toast)
     await flush()
-    expect(toast.textContent).toBe('載入失敗，請檢查網路')
+    expect(toast.textContent).toBe('加載失敗，請檢查網絡')
     document.querySelector('h1')!.firstChild!.nodeValue = '默认视频'
     await flush()
-    expect(document.querySelector('h1')!.textContent).toBe('預設影片')
+    expect(document.querySelector('h1')!.textContent).toBe('默認視頻')
   })
 
   it('keeps the original Simplified text when Simplified Chinese is chosen', async () => {

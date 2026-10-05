@@ -1048,7 +1048,7 @@ class SettingsPage(QWidget):
             (
                 _setting_row(
                     "显示语言",
-                    "默认繁体中文（台湾）；修改后重新打开 Saber-Translator 生效，网页重新整理即可",
+                    "默认繁体中文；修改后重新打开 Saber-Translator 生效",
                     self.ui_language,
                 ),
             ),

@@ -1051,35 +1051,23 @@ def test_traditional_interface_converts_every_qt_text(tmp_path) -> None:
     )
     assert result.returncode == 0, result.stderr
     output = result.stdout
-    for traditional in ("自動儲存", "設定", "開啟網頁", "正在啟動後端", "語言"):
+    for traditional in ("自動保存", "設置", "打開網頁", "正在啟動後端", "語言"):
         assert traditional in output, traditional
     for simplified in ("自动保存", "设置", "打开网页", "启动后端"):
         assert simplified not in output, simplified
+    # 只換字，不換成地區用語
+    for regional in ("儲存", "設定", "開啟網頁"):
+        assert regional not in output, regional
 
 
-def test_desktop_and_web_share_the_same_taiwan_term_table() -> None:
-    import re as _re
 
-    from src.backend_v2.desktop.ui_language import TW_UI_TERMS
-
-    source = (PROJECT_ROOT / "vue-frontend" / "src" / "i18n" / "uiLanguage.ts").read_text(encoding="utf-8")
-    block = source.split("export const TW_UI_TERMS", 1)[1].split("]\n", 1)[0] + "]"
-    web_terms = tuple(
-        (json.loads(f'"{a}"'), json.loads(f'"{b}"'))
-        for a, b in _re.findall(r'\["((?:[^"\\]|\\.)*)", "((?:[^"\\]|\\.)*)"\]', block)
-    )
-    assert web_terms == TW_UI_TERMS
-
-
-def test_ui_text_uses_taiwan_wording(monkeypatch) -> None:
+def test_ui_text_changes_only_the_characters(monkeypatch) -> None:
     import src.backend_v2.desktop.ui_language as ui_language
 
     monkeypatch.setattr(ui_language, "_active", "zh-TW")
-    assert ui_language.ui_text("新建章节") == "新增章節"
-    assert ui_language.ui_text("重新建立") == "重新建立"
-    assert ui_language.ui_text("文本块对齐：居中") == "文字塊對齊：置中"
-    assert ui_language.ui_text("运行端口") == "執行連接埠"
-    assert ui_language.ui_text("连接端口") == "連線埠"
+    assert ui_language.ui_text("新建章节") == "新建章節"
+    assert ui_language.ui_text("设置 视频 文件 默认 为了 里面") == "設置 視頻 文件 默認 為了 裡面"
     assert ui_language.ui_text("Saber-Translator") == "Saber-Translator"
+    assert ui_language.LANGUAGE_LABELS["zh-TW"] == "繁體中文"
     monkeypatch.setattr(ui_language, "_active", "zh-CN")
     assert ui_language.ui_text("新建章节") == "新建章节"
