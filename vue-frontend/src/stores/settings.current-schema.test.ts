@@ -138,7 +138,8 @@ describe('useSettingsStore backend-first loading', () => {
     const store = useSettingsStore()
     expect(await store.loadFromBackend()).toBe(false)
     expect(store.backendError).toContain('fields are incomplete')
-    expect(store.settings.textStyle.useAutoTextColor).toBe(false)
+    // 載入失敗時保留內建預設值，不用不完整的資料
+    expect(store.settings.textStyle.useAutoTextColor).toBe(createDefaultSettings().textStyle.useAutoTextColor)
   })
 
   it('loads provider memory and hydrates the stored API key into the form', async () => {

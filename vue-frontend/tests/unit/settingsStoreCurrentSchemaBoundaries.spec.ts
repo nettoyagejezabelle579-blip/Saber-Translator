@@ -71,6 +71,8 @@ describe('settings store current schema boundaries', () => {
   it('uses factory runtime options for a provider with no saved memory', () => {
     const store = useSettingsStore()
     const defaults = createDefaultSettings()
+    // 預設服務商已是 DeepSeek；先換成別家，再切到沒有記憶的 DeepSeek
+    store.setTranslationProvider('siliconflow')
 
     store.updateTranslationService({
       translationMode: 'single',
@@ -205,7 +207,7 @@ describe('settings store current schema boundaries', () => {
       bookSettings: [],
       providerSettings: [{
         domain: 'translation',
-        provider: 'siliconflow',
+        provider: createDefaultSettings().translation.provider,
         revision: 1,
       }],
       credentials: [{
@@ -214,7 +216,7 @@ describe('settings store current schema boundaries', () => {
         currentVersion: 1,
         domain: 'translation',
         hasKey: true,
-        provider: 'siliconflow',
+        provider: createDefaultSettings().translation.provider,
         revision: 1,
         secret: { api_key: 'new-secret' },
       }],
@@ -232,7 +234,7 @@ describe('settings store current schema boundaries', () => {
     ) as V2SettingsTransaction
     expect(secondTransaction.settings?.[0]?.baseRevision).toBe(9)
     expect(secondTransaction.providerSettings?.find(
-      row => row.domain === 'translation' && row.provider === 'siliconflow',
+      row => row.domain === 'translation' && row.provider === createDefaultSettings().translation.provider,
     )).toMatchObject({
       baseRevision: 1,
       credentialVersionId: '22222222-2222-4222-8222-222222222222',

@@ -124,8 +124,10 @@ describe('settings store plugin agent configuration', () => {
   it('keeps plugin agent credentials isolated per provider', () => {
     const store = useSettingsStore()
 
-    expect(store.settings.pluginAgent.openaiOptions.execution.transportRetries).toBe(1)
-    expect(store.settings.pluginAgent.openaiOptions.execution.businessRetries).toBe(0)
+    // 與內建預設值一致（前後端都是 3 / 3）
+    const factoryExecution = createDefaultSettings().pluginAgent.openaiOptions.execution
+    expect(store.settings.pluginAgent.openaiOptions.execution.transportRetries).toBe(factoryExecution.transportRetries)
+    expect(store.settings.pluginAgent.openaiOptions.execution.businessRetries).toBe(factoryExecution.businessRetries)
 
     store.updatePluginAgent({
       apiKey: 'sf-key',
@@ -255,7 +257,9 @@ describe('settings store plugin agent configuration', () => {
     store.setPluginAgentProvider('deepseek')
 
     expect(store.settings.pluginAgent.openaiOptions.execution.rpmLimit).toBe(0)
-    expect(store.settings.pluginAgent.openaiOptions.execution.businessRetries).toBe(0)
+    expect(store.settings.pluginAgent.openaiOptions.execution.businessRetries).toBe(
+      createDefaultSettings().pluginAgent.openaiOptions.execution.businessRetries,
+    )
     expect(store.settings.pluginAgent.openaiOptions.execution.useStream).toBe(true)
     expect(store.settings.pluginAgent.openaiOptions.request.forceJsonOutput).toBe(false)
     expect(store.settings.pluginAgent.openaiOptions.request.extraBody).toBeUndefined()

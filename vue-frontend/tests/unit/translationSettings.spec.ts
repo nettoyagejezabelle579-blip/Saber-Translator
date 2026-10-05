@@ -161,6 +161,8 @@ describe('TranslationSettings', () => {
 
   it('restores prompt mode, translation mode, and prompt when switching providers', async () => {
     const store = useSettingsStore()
+    // 預設服務商已是 DeepSeek；先換成別家，才是真的「切換」
+    store.settings.translation.provider = 'siliconflow'
     const cachedOptions = JSON.parse(
       JSON.stringify(store.settings.translation.openaiOptions),
     ) as typeof store.settings.translation.openaiOptions
