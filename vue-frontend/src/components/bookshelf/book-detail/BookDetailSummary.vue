@@ -22,6 +22,7 @@ const emit = defineEmits<{
   (event: 'addTag'): void
   (event: 'edit'): void
   (event: 'delete'): void
+  (event: 'merge'): void
   (event: 'characterStudio'): void
   (event: 'insight'): void
   (event: 'removeTag', tagName: string): void
@@ -111,6 +112,7 @@ function handleCoverError(): void {
           角色工坊
         </UiButton>
         <UiButton size="sm" variant="secondary" @click="emit('edit')">编辑书籍</UiButton>
+        <UiButton size="sm" variant="secondary" @click="emit('merge')">并入其他书</UiButton>
         <UiButton size="sm" variant="danger" @click="emit('delete')">删除书籍</UiButton>
       </div>
     </div>

@@ -1412,6 +1412,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chapters/{chapter_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chapter_id: components["parameters"]["ChapterId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Move a chapter to the end of another book, or out into a new book (copies the old book's glossary and tags). */
+        post: operations["moveChapter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/books/{book_id}/merge-into": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: components["parameters"]["BookId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Move every chapter of this book into another book and delete this book. Glossaries and tags are combined; the book cover becomes the first chapter's cover. */
+        post: operations["mergeBookInto"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chapters/{chapter_id}/cover": {
         parameters: {
             query?: never;
@@ -5060,6 +5098,17 @@ export interface components {
         };
         TitleUpdateCommand: {
             title: string;
+        };
+        ChapterMoveResult: {
+            chapterId: string;
+            sourceBookId: string;
+            bookId: string;
+            createdBook: boolean;
+        };
+        BookMergeResult: {
+            bookId: string;
+            mergedBookId: string;
+            movedChapterIds: string[];
         };
         ChapterCoverResult: {
             chapterId: string;
@@ -8927,6 +8976,69 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            423: components["responses"]["Locked"];
+        };
+    };
+    moveChapter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chapter_id: components["parameters"]["ChapterId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    targetBookId?: string;
+                    newBookTitle?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Chapter moved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterMoveResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+            423: components["responses"]["Locked"];
+        };
+    };
+    mergeBookInto: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                book_id: components["parameters"]["BookId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    targetBookId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Book merged. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookMergeResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
             423: components["responses"]["Locked"];
         };
     };

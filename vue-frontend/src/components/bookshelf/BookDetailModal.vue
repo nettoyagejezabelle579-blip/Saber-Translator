@@ -3,7 +3,15 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useBookshelfStore } from '@/stores/bookshelfStore'
 import { ApiClientError } from '@/api/client'
-import { clearChapterCover, createChaptersExportJob, getBookDetail, setChapterCover } from '@/api/bookshelf'
+import {
+  clearChapterCover,
+  createChaptersExportJob,
+  getBookDetail,
+  getBooks,
+  mergeBookInto,
+  moveChapter,
+  setChapterCover,
+} from '@/api/bookshelf'
 import { showToast, useToast } from '@/utils/toast'
 import { triggerUrlDownload, withDownloadFileName } from '@/utils/browserDownload'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -13,6 +21,7 @@ import BookDeleteConfirmContent from './book-detail/BookDeleteConfirmContent.vue
 import BookDetailSummary from './book-detail/BookDetailSummary.vue'
 import ChapterFormContent from './book-detail/ChapterFormContent.vue'
 import ChapterList from './book-detail/ChapterList.vue'
+import MoveTargetContent from './book-detail/MoveTargetContent.vue'
 import QuickTagPicker from './book-detail/QuickTagPicker.vue'
 import { createTranslationBatch } from '@/api/v2/translation'
 import { useTaskCenterStore } from '@/stores/taskCenterStore'
@@ -339,6 +348,84 @@ async function handleChapterReorder(chapterIds: string[]): Promise<boolean> {
   }
 }
 
+// ---- 移動章節／把整本書併入其他書 ----
+const showMoveModal = ref(false)
+const moveMode = ref<'chapter' | 'book'>('chapter')
+const moveChapterId = ref<string | null>(null)
+const moveTargetBookId = ref('')
+const moveNewBookTitle = ref('')
+const moveBooks = ref<Array<{ id: string; title: string; chapterCount?: number }>>([])
+const moveBooksLoading = ref(false)
+const isMoving = ref(false)
+const moveTitle = computed(() => {
+  if (moveMode.value === 'book') return `把「${currentBook.value?.title ?? ''}」并入其他书`
+  const chapter = chapters.value.find(item => item.id === moveChapterId.value)
+  return `移动章节「${chapter?.title ?? ''}」`
+})
+
+async function openMoveModal(mode: 'chapter' | 'book', chapterId: string | null = null) {
+  moveMode.value = mode
+  moveChapterId.value = chapterId
+  moveTargetBookId.value = ''
+  moveNewBookTitle.value = ''
+  moveBooks.value = []
+  showMoveModal.value = true
+  moveBooksLoading.value = true
+  try {
+    const all = await getBooks({ sortBy: 'title', sortOrder: 'asc' })
+    moveBooks.value = all
+      .filter(book => book.id !== currentBook.value?.id)
+      .map(book => ({ id: book.id, title: book.title, chapterCount: book.chapterCount }))
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '载入书籍失败', 'error')
+  } finally {
+    moveBooksLoading.value = false
+  }
+}
+
+async function confirmMove() {
+  const book = currentBook.value
+  if (!book || isMoving.value || !moveTargetBookId.value) return
+  isMoving.value = true
+  try {
+    if (moveMode.value === 'chapter' && moveChapterId.value) {
+      const chapterId = moveChapterId.value
+      const creating = moveTargetBookId.value === '__new__'
+      const result = await moveChapter(
+        chapterId,
+        creating
+          ? { newBookTitle: moveNewBookTitle.value.trim() }
+          : { targetBookId: moveTargetBookId.value },
+      )
+      const nextSelection = new Set(selectedChapterIds.value)
+      nextSelection.delete(chapterId)
+      selectedChapterIds.value = nextSelection
+      await refreshBookDetail()
+      await bookshelfStore.loadBookDetail(result.bookId)
+      showToast(result.createdBook ? '已移出成为新书' : '章节已移动', 'success')
+    } else {
+      const result = await mergeBookInto(book.id, moveTargetBookId.value)
+      bookshelfStore.deleteBook(book.id)
+      const target = await bookshelfStore.loadBookDetail(result.bookId)
+      if (target) bookshelfStore.setCurrentBook(result.bookId)
+      selectedChapterIds.value = new Set()
+      showToast(`已并入，新增 ${result.movedChapterIds.length} 个章节`, 'success')
+      if (!target) emit('close')
+    }
+    showMoveModal.value = false
+    void bookshelfStore.loadBooks()
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 423) {
+      showToast('这本书或目标书还有正在执行的任务，请等任务完成或在任务中心取消后再移动', 'warning')
+      taskCenterStore.open({ jobId: lockedJobId(error), bookId: book.id })
+    } else {
+      showToast(error instanceof Error ? error.message : '移动失败', 'error')
+    }
+  } finally {
+    isMoving.value = false
+  }
+}
+
 const coverBusyChapterId = ref<string | null>(null)
 
 async function changeChapterCover(chapterId: string, file: File | null): Promise<void> {
@@ -537,6 +624,7 @@ async function quickAddTagToBook(tagName: string): Promise<boolean> {
         @add-tag="openAddTagModal"
         @delete="deleteCurrentBook"
         @edit="editCurrentBook"
+        @merge="openMoveModal('book')"
         @insight="goToInsight"
         @character-studio="goToCharacterStudio"
         @remove-tag="removeTag"
@@ -551,6 +639,7 @@ async function quickAddTagToBook(tagName: string): Promise<boolean> {
         :translation-pending="isBatchTranslating"
         :translation-allowed="translationAllowed"
         :cover-busy-chapter-id="coverBusyChapterId"
+        @move="chapterId => openMoveModal('chapter', chapterId)"
         @set-cover="(chapterId, file) => changeChapterCover(chapterId, file)"
         @clear-cover="chapterId => changeChapterCover(chapterId, null)"
         @create="openCreateChapterModal"
@@ -586,6 +675,36 @@ async function quickAddTagToBook(tagName: string): Promise<boolean> {
       >
         <UiButton type="button" variant="secondary" @click="showChapterModal = false">取消</UiButton>
         <UiButton type="button" variant="primary" :loading="isChapterSaving" @click="saveChapter">保存</UiButton>
+      </ProductActionRow>
+    </template>
+  </BaseModal>
+
+  <BaseModal
+    v-model="showMoveModal"
+    :title="moveTitle"
+    size="small"
+    :close-on-overlay="!isMoving"
+    :close-on-esc="!isMoving"
+  >
+    <MoveTargetContent
+      v-model:target-book-id="moveTargetBookId"
+      v-model:new-book-title="moveNewBookTitle"
+      :mode="moveMode"
+      :books="moveBooks"
+      :loading="moveBooksLoading"
+    />
+    <template #footer>
+      <ProductActionRow aria-label="移动操作" variant="dialog">
+        <UiButton type="button" variant="secondary" :disabled="isMoving" @click="showMoveModal = false">取消</UiButton>
+        <UiButton
+          type="button"
+          variant="primary"
+          :loading="isMoving"
+          :disabled="!moveTargetBookId"
+          @click="confirmMove"
+        >
+          {{ moveMode === 'book' ? '并入' : '移动' }}
+        </UiButton>
       </ProductActionRow>
     </template>
   </BaseModal>

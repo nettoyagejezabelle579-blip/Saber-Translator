@@ -32,6 +32,7 @@ defineEmits<{
   (event: 'read', chapterId: string): void
   (event: 'edit', chapterId: string): void
   (event: 'delete', chapterId: string): void
+  (event: 'move', chapterId: string): void
   (event: 'select', chapterId: string, selected: boolean): void
 }>()
 
@@ -105,6 +106,14 @@ const canSelect = computed(() => imageCount.value > 0)
           @click="$emit('edit', chapter.id)"
         >
           编辑
+        </UiButton>
+        <UiButton
+          variant="card-action"
+          size="xs"
+          class="chapter-row__move-action"
+          @click="$emit('move', chapter.id)"
+        >
+          移动
         </UiButton>
         <UiButton
           variant="plain-danger"

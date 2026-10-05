@@ -18,6 +18,7 @@ from src.backend_v2.serialization import canonical_json as _json
 from src.backend_v2.timestamps import iso_utc, utcnow as _utcnow
 from src.backend_v2.content.translation_constraints import (
     empty_translation_constraints,
+    merge_translation_constraints,
     validate_translation_constraints,
 )
 from src.backend_v2.content.page_locks import page_reserved_by_job
@@ -604,6 +605,241 @@ class ContentRepository:
                     }
                 )
         return {"deleted": deleted, "rejected": rejected}
+
+    # ---- 書與章節互相移動 -------------------------------------------------
+
+    def _library_book_for_update(self, connection: object, book_id: str) -> dict[str, object]:
+        row = connection.execute(  # type: ignore[attr-defined]
+            select(books.c.id, books.c.title, books.c.cover_asset_id).where(
+                books.c.id == book_id,
+                books.c.kind == "library",
+                books.c.owner_user_id == effective_owner_id(),
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            raise ContentNotFound("book not found")
+        return dict(row)
+
+    def _relocate_chapters(
+        self,
+        connection: object,
+        *,
+        source_book_id: str,
+        chapter_ids: list[str],
+        target_book_id: str,
+    ) -> None:
+        """Append chapters (in the given order) to the end of another book."""
+        now = _utcnow()
+        next_ordinal = connection.execute(  # type: ignore[attr-defined]
+            select(func.coalesce(func.max(chapters.c.ordinal), 0)).where(
+                chapters.c.book_id == target_book_id
+            )
+        ).scalar_one()
+        moved_pages = False
+        for chapter_id in chapter_ids:
+            self._assert_chapter_writable(connection, chapter_id)
+            next_ordinal += 1
+            connection.execute(  # type: ignore[attr-defined]
+                update(chapters)
+                .where(chapters.c.id == chapter_id)
+                .values(book_id=target_book_id, ordinal=next_ordinal, updated_at=now)
+            )
+            moved_pages = moved_pages or connection.execute(  # type: ignore[attr-defined]
+                select(exists().where(pages.c.chapter_id == chapter_id))
+            ).scalar_one()
+        # 來源書剩下的章節重新編號（先移到不會衝突的範圍，再依序編回 1..n）
+        remaining = list(
+            connection.execute(  # type: ignore[attr-defined]
+                select(chapters.c.id)
+                .where(chapters.c.book_id == source_book_id)
+                .order_by(chapters.c.ordinal)
+            ).scalars()
+        )
+        offset = len(remaining) * 2 + 1
+        for index, chapter_id in enumerate(remaining, start=1):
+            connection.execute(  # type: ignore[attr-defined]
+                update(chapters).where(chapters.c.id == chapter_id).values(ordinal=offset + index)
+            )
+        for index, chapter_id in enumerate(remaining, start=1):
+            connection.execute(  # type: ignore[attr-defined]
+                update(chapters).where(chapters.c.id == chapter_id).values(ordinal=index)
+            )
+        for book_id in (source_book_id, target_book_id):
+            connection.execute(  # type: ignore[attr-defined]
+                update(books)
+                .where(books.c.id == book_id)
+                .values(
+                    chapter_order_revision=books.c.chapter_order_revision + 1,
+                    updated_at=now,
+                )
+            )
+            if moved_pages:
+                mark_book_insight_derived_stale(connection, book_id=book_id, now=now)
+
+    def move_chapter(
+        self,
+        *,
+        chapter_id: str,
+        target_book_id: str | None = None,
+        new_book_title: str | None = None,
+    ) -> dict[str, object]:
+        """Move a chapter to the end of another book, or out into a new book."""
+        if (target_book_id is None) == (new_book_title is None):
+            raise ValueError("give exactly one of targetBookId or newBookTitle")
+        with immediate_transaction(self.engine) as connection:
+            row = connection.execute(
+                select(chapters.c.book_id, chapters.c.title)
+                .join(books, books.c.id == chapters.c.book_id)
+                .where(
+                    chapters.c.id == chapter_id,
+                    books.c.kind == "library",
+                    books.c.owner_user_id == effective_owner_id(),
+                )
+            ).mappings().one_or_none()
+            if row is None:
+                raise ContentNotFound("chapter not found")
+            source_book_id = str(row["book_id"])
+            self._assert_targets_idle(connection, source_book_id, [chapter_id])
+            created = False
+            if target_book_id is not None:
+                if target_book_id == source_book_id:
+                    raise ValueError("chapter is already in that book")
+                self._library_book_for_update(connection, target_book_id)
+                self._assert_targets_idle(connection, target_book_id, [])
+            else:
+                title = (new_book_title or "").strip() or str(row["title"])
+                if len(title) > 500:
+                    raise ValueError("book title must contain 1-500 characters")
+                target_book_id = str(uuid.uuid4())
+                connection.execute(
+                    insert(books).values(
+                        id=target_book_id,
+                        owner_user_id=effective_owner_id(),
+                        kind="library",
+                        title=title,
+                    )
+                )
+                # 新書沿用原本那本書的術語表與標籤（通常是同一套作品）
+                source_constraints = connection.execute(
+                    select(translation_constraints.c.payload_json).where(
+                        translation_constraints.c.book_id == source_book_id
+                    )
+                ).scalar_one_or_none()
+                connection.execute(
+                    insert(translation_constraints).values(
+                        book_id=target_book_id,
+                        payload_json=source_constraints
+                        or _json(empty_translation_constraints()),
+                    )
+                )
+                tag_ids = list(
+                    connection.execute(
+                        select(book_tags.c.tag_id).where(book_tags.c.book_id == source_book_id)
+                    ).scalars()
+                )
+                if tag_ids:
+                    connection.execute(
+                        insert(book_tags),
+                        [{"book_id": target_book_id, "tag_id": tag_id} for tag_id in tag_ids],
+                    )
+                created = True
+            self._relocate_chapters(
+                connection,
+                source_book_id=source_book_id,
+                chapter_ids=[chapter_id],
+                target_book_id=target_book_id,
+            )
+        return {
+            "chapterId": chapter_id,
+            "sourceBookId": source_book_id,
+            "bookId": target_book_id,
+            "createdBook": created,
+        }
+
+    def merge_book_into(self, *, book_id: str, target_book_id: str) -> dict[str, object]:
+        """Move every chapter of a book into another book, then delete the empty book.
+
+        Returns the moved chapter ids and the merged book's cover asset (if any) so
+        the caller can keep that cover on the first moved chapter.
+        """
+        if book_id == target_book_id:
+            raise ValueError("cannot merge a book into itself")
+        with immediate_transaction(self.engine) as connection:
+            source = self._library_book_for_update(connection, book_id)
+            self._library_book_for_update(connection, target_book_id)
+            chapter_ids = [
+                str(value)
+                for value in connection.execute(
+                    select(chapters.c.id)
+                    .where(chapters.c.book_id == book_id)
+                    .order_by(chapters.c.ordinal)
+                ).scalars()
+            ]
+            self._assert_targets_idle(connection, book_id, chapter_ids)
+            self._assert_targets_idle(connection, target_book_id, [])
+            self._relocate_chapters(
+                connection,
+                source_book_id=book_id,
+                chapter_ids=chapter_ids,
+                target_book_id=target_book_id,
+            )
+            # 術語表合併：目標書原有的條目優先，只補上它沒有的
+            payloads = {
+                str(row[0]): row[1]
+                for row in connection.execute(
+                    select(
+                        translation_constraints.c.book_id,
+                        translation_constraints.c.payload_json,
+                    ).where(translation_constraints.c.book_id.in_([book_id, target_book_id]))
+                ).all()
+            }
+            if payloads.get(book_id):
+                merged = merge_translation_constraints(
+                    json.loads(payloads.get(target_book_id) or "null")
+                    or empty_translation_constraints(),
+                    json.loads(payloads[book_id]),
+                )
+                if target_book_id in payloads:
+                    connection.execute(
+                        update(translation_constraints)
+                        .where(translation_constraints.c.book_id == target_book_id)
+                        .values(
+                            payload_json=_json(merged),
+                            revision=translation_constraints.c.revision + 1,
+                            updated_at=_utcnow(),
+                        )
+                    )
+                else:
+                    connection.execute(
+                        insert(translation_constraints).values(
+                            book_id=target_book_id, payload_json=_json(merged)
+                        )
+                    )
+            # 標籤取聯集
+            existing_tags = set(
+                connection.execute(
+                    select(book_tags.c.tag_id).where(book_tags.c.book_id == target_book_id)
+                ).scalars()
+            )
+            new_tags = [
+                tag_id
+                for tag_id in connection.execute(
+                    select(book_tags.c.tag_id).where(book_tags.c.book_id == book_id)
+                ).scalars()
+                if tag_id not in existing_tags
+            ]
+            if new_tags:
+                connection.execute(
+                    insert(book_tags),
+                    [{"book_id": target_book_id, "tag_id": tag_id} for tag_id in new_tags],
+                )
+            connection.execute(delete(books).where(books.c.id == book_id))
+        return {
+            "bookId": target_book_id,
+            "mergedBookId": book_id,
+            "movedChapterIds": chapter_ids,
+            "mergedBookCoverAssetId": source["cover_asset_id"],
+        }
 
     def chapter_cover_source(self, chapter_id: str) -> str | None:
         """Owner-checked first-page source asset of a chapter (None when it has no pages)."""

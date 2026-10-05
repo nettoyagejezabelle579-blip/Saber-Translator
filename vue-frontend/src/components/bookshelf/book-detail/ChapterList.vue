@@ -42,6 +42,7 @@ const emit = defineEmits<{
   (event: 'translateSelected'): void
   (event: 'setCover', chapterId: string, file: File): void
   (event: 'clearCover', chapterId: string): void
+  (event: 'move', chapterId: string): void
 }>()
 
 // 封面（單行本）/ 列表兩種顯示方式，記住使用者的選擇
@@ -133,6 +134,7 @@ function toggleAll() {
       @translate="$emit('translate', $event)"
       @set-cover="(chapterId, file) => $emit('setCover', chapterId, file)"
       @clear-cover="$emit('clearCover', $event)"
+      @move="$emit('move', $event)"
     />
     <ProductScrollStack
       v-else-if="chapters.length > 0"
@@ -159,6 +161,7 @@ function toggleAll() {
         @drag-start="(event, rowIndex) => $emit('dragStart', event, rowIndex)"
         @drop="(event, rowIndex) => $emit('drop', event, rowIndex)"
         @edit="$emit('edit', $event)"
+        @move="$emit('move', $event)"
         @read="$emit('read', $event)"
         @translate="$emit('translate', $event)"
         @select="(chapterId, selected) => $emit('select', chapterId, selected)"

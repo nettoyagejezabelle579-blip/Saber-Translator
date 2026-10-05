@@ -2788,3 +2788,181 @@ def test_chapter_covers_default_to_first_page_and_accept_custom_images(content_p
     with Image.open(BytesIO(client.get(f"/api/v2/chapters/{chapter_id}/cover").data)) as image:
         assert image.getpixel((10, 10))[0] > 150
     assert client.get("/api/v2/chapters/not-a-real-chapter/cover").status_code == 404
+
+
+def _move_client(data_root, engine):
+    app = create_api_app(
+        ApiSettings(
+            data_root=data_root,
+            identity=RuntimeIdentity(epoch_id="test-api", epoch_token="test-only", test_mode=True),
+            engine=engine,
+        )
+    )
+    return app.test_client()
+
+
+def _add_page(client, chapter_id: str, key: str, color=(200, 30, 30)) -> None:
+    created = client.post(
+        f"/api/v2/chapters/{chapter_id}/pages",
+        data={
+            "file": (BytesIO(_image_bytes((40, 60), color=color)), f"{key}.png"),
+            "logicalPath": f"{key}.png",
+            "textStyle": json.dumps({**DEFAULT_TEXT_STYLE}),
+        },
+        headers={"Idempotency-Key": key},
+    )
+    assert created.status_code == 201
+
+
+def _titles(repository, book_id: str) -> list[str]:
+    return [chapter["title"] for chapter in repository.list_chapters(book_id)["chapters"]]
+
+
+def test_move_chapter_to_another_book_and_out_to_a_new_book(content_platform) -> None:
+    data_root, engine, repository, _storage, _importer, book, chapter = content_platform
+    client = _move_client(data_root, engine)
+    source_id = str(book["id"])
+    second = repository.create_chapter(book_id=source_id, title="Chapter 2")
+    third = repository.create_chapter(book_id=source_id, title="Chapter 3")
+    _add_page(client, str(second["id"]), "move-page")
+    target = repository.create_book(title="Target")
+    repository.create_chapter(book_id=str(target["id"]), title="T1")
+    constraints = empty_translation_constraints()
+    constraints["glossary"]["enabled"] = True
+    constraints["glossary"]["entries"] = [
+        {"source": "勇者", "target": "勇者", "note": "", "matchMode": "text"}
+    ]
+    with engine.begin() as connection:
+        connection.execute(
+            update(translation_constraints)
+            .where(translation_constraints.c.book_id == source_id)
+            .values(payload_json=json.dumps(constraints))
+        )
+
+    moved = client.post(
+        f"/api/v2/chapters/{second['id']}/move",
+        json={"targetBookId": str(target["id"])},
+    )
+    assert moved.status_code == 200, moved.get_json()
+    assert moved.get_json()["createdBook"] is False
+    assert _titles(repository, source_id) == ["Chapter", "Chapter 3"]
+    assert _titles(repository, str(target["id"])) == ["T1", "Chapter 2"]
+    ordinals = [c["ordinal"] for c in repository.list_chapters(source_id)["chapters"]]
+    assert ordinals == [1, 2]
+    # 頁面跟著章節走
+    assert len(repository.list_pages(chapter_id=str(second["id"]), all_pages=True)["items"]) == 1
+
+    out = client.post(f"/api/v2/chapters/{third['id']}/move", json={"newBookTitle": "番外篇"})
+    result = out.get_json()
+    assert out.status_code == 200 and result["createdBook"] is True
+    assert _titles(repository, result["bookId"]) == ["Chapter 3"]
+    detail = client.get(f"/api/v2/books/{result['bookId']}").get_json()
+    assert detail["title"] == "番外篇"
+    with engine.connect() as connection:
+        copied = connection.execute(
+            select(translation_constraints.c.payload_json).where(
+                translation_constraints.c.book_id == result["bookId"]
+            )
+        ).scalar_one()
+    assert json.loads(copied)["glossary"]["entries"][0]["source"] == "勇者"
+
+    # 錯誤情況
+    same = client.post(f"/api/v2/chapters/{chapter['id']}/move", json={"targetBookId": source_id})
+    assert same.status_code in (400, 422)
+    both = client.post(
+        f"/api/v2/chapters/{chapter['id']}/move",
+        json={"targetBookId": str(target["id"]), "newBookTitle": "x"},
+    )
+    assert both.status_code in (400, 422)
+    missing = client.post(f"/api/v2/chapters/{chapter['id']}/move", json={"targetBookId": "nope"})
+    assert missing.status_code == 404
+    quick = client.post(
+        f"/api/v2/chapters/{chapter['id']}/move",
+        json={"targetBookId": QUICK_WORKSPACE_BOOK_ID},
+    )
+    assert quick.status_code == 404
+
+
+def test_merge_book_into_another_book(content_platform) -> None:
+    data_root, engine, repository, storage, importer, book, chapter = content_platform
+    client = _move_client(data_root, engine)
+    target = repository.create_book(title="Series")
+    repository.create_chapter(book_id=str(target["id"]), title="Vol 1")
+    created = client.post(
+        "/api/v2/books",
+        data={
+            "title": "Vol 2 book",
+            "tagIds": "[]",
+            "cover": (BytesIO(_image_bytes((300, 450), color=(20, 200, 20))), "c.png"),
+        },
+    )
+    assert created.status_code == 201, created.get_json()
+    source_id = created.get_json()["id"]
+    first = repository.create_chapter(book_id=source_id, title="Vol 2")
+    repository.create_chapter(book_id=source_id, title="Vol 2 extra")
+    source_constraints = empty_translation_constraints()
+    source_constraints["glossary"]["entries"] = [
+        {"source": "魔王", "target": "魔王", "note": "", "matchMode": "text"},
+        {"source": "勇者", "target": "勇者大人", "note": "", "matchMode": "text"},
+    ]
+    target_constraints = empty_translation_constraints()
+    target_constraints["glossary"]["entries"] = [
+        {"source": "勇者", "target": "勇者", "note": "", "matchMode": "text"}
+    ]
+    with engine.begin() as connection:
+        for book_id, payload in ((source_id, source_constraints), (str(target["id"]), target_constraints)):
+            connection.execute(
+                update(translation_constraints)
+                .where(translation_constraints.c.book_id == book_id)
+                .values(payload_json=json.dumps(payload))
+            )
+
+    merged = client.post(
+        f"/api/v2/books/{source_id}/merge-into",
+        json={"targetBookId": str(target["id"])},
+    )
+    assert merged.status_code == 200, merged.get_json()
+    assert merged.get_json()["movedChapterIds"][0] == str(first["id"])
+    assert _titles(repository, str(target["id"])) == ["Vol 1", "Vol 2", "Vol 2 extra"]
+    assert client.get(f"/api/v2/books/{source_id}").status_code == 404
+    with engine.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                select(translation_constraints.c.payload_json).where(
+                    translation_constraints.c.book_id == str(target["id"])
+                )
+            ).scalar_one()
+        )
+    entries = {entry["source"]: entry["target"] for entry in payload["glossary"]["entries"]}
+    assert entries == {"勇者": "勇者", "魔王": "魔王"}  # 目標書原有的翻譯優先
+    # 原書封面變成第一卷的封面
+    listed = client.get(f"/api/v2/books/{target['id']}").get_json()["chapters"]
+    assert listed[1]["hasCustomCover"] is True
+    with Image.open(BytesIO(client.get(listed[1]["coverUrl"]).data)) as image:
+        assert image.getpixel((10, 10))[1] > 150
+
+    assert client.post(
+        f"/api/v2/books/{target['id']}/merge-into", json={"targetBookId": str(target["id"])}
+    ).status_code in (400, 422)
+
+
+def test_move_is_refused_while_a_job_uses_the_book(content_platform) -> None:
+    data_root, engine, repository, _storage, _importer, book, chapter = content_platform
+    client = _move_client(data_root, engine)
+    target = repository.create_book(title="Target")
+    with engine.begin() as connection:
+        connection.execute(
+            insert(jobs).values(
+                id=str(uuid.uuid4()),
+                kind="translation",
+                status="queued",
+                book_id=str(target["id"]),
+                config_json="{}",
+                latest_progress_json=_stored_job_progress(),
+            )
+        )
+    refused = client.post(
+        f"/api/v2/chapters/{chapter['id']}/move", json={"targetBookId": str(target["id"])}
+    )
+    assert refused.status_code == 423
+    assert _titles(repository, str(book["id"])) == ["Chapter"]

@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (event: 'translate', chapterId: string): void
   (event: 'setCover', chapterId: string, file: File): void
   (event: 'clearCover', chapterId: string): void
+  (event: 'move', chapterId: string): void
 }>()
 
 const fileInput = ref<InstanceType<typeof UiFileInput> | null>(null)
@@ -101,6 +102,9 @@ function onCoverError(chapterId: string): void {
           @click="emit('translate', chapter.id)"
         >
           翻译
+        </UiButton>
+        <UiButton size="xs" variant="ghost" @click="emit('move', chapter.id)">
+          移动
         </UiButton>
       </div>
     </article>

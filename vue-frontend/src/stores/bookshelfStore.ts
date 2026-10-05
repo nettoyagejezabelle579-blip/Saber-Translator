@@ -474,6 +474,7 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
     isAllSelected,
 
     updateBook,
+    deleteBook,
     getBookById,
 
     setSearchQuery,

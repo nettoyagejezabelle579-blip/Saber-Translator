@@ -8,6 +8,7 @@ import BookDetailSummary from '@/components/bookshelf/book-detail/BookDetailSumm
 import ChapterList from '@/components/bookshelf/book-detail/ChapterList.vue'
 import ChapterFormContent from '@/components/bookshelf/book-detail/ChapterFormContent.vue'
 import ChapterRow from '@/components/bookshelf/book-detail/ChapterRow.vue'
+import MoveTargetContent from '@/components/bookshelf/book-detail/MoveTargetContent.vue'
 import QuickTagPicker from '@/components/bookshelf/book-detail/QuickTagPicker.vue'
 import BookDetailModal from '@/components/bookshelf/BookDetailModal.vue'
 import ProductActionRow from '@/components/product/ProductActionRow.vue'
@@ -67,7 +68,7 @@ const ChapterListStub = defineComponent({
     downloadPending: Boolean,
     translationPending: Boolean,
   },
-  emits: ['delete', 'downloadSelected', 'select', 'selectAll', 'translateSelected'],
+  emits: ['delete', 'downloadSelected', 'move', 'select', 'selectAll', 'translateSelected'],
   template: '<div class="chapter-list-stub" />',
 })
 
@@ -426,6 +427,7 @@ describe('bookshelf detail child components', () => {
       'primary',
       'primary',
       'card-action',
+      'card-action',
       'plain-danger',
     ])
     expect(wrapper.find('.chapter-action-btn').exists()).toBe(false)
@@ -568,7 +570,8 @@ describe('bookshelf detail child components', () => {
     expect(source).toContain('aria-label="章节表单操作"')
     expect(source).toContain('aria-label="快速标签操作"')
     expect(source).toContain('aria-label="书籍详情删除操作"')
-    expect(source.match(/<ProductActionRow/g)).toHaveLength(3)
+    expect(source).toContain('aria-label="移动操作"')
+    expect(source.match(/<ProductActionRow/g)).toHaveLength(4)
     expect(source).not.toContain('<template #footer>\r\n      <UiButton')
     expect(source).not.toContain('<template #footer>\n      <UiButton')
   })
@@ -584,6 +587,116 @@ describe('bookshelf detail child components', () => {
       /async function updateChapterApi[\s\S]*?\n {2}}\n\n {2}async function deleteChapterApi/,
     )?.[0] ?? ''
     expect(updateChapterSource).not.toContain('catch')
+  })
+
+  it('offers a new book only when moving a chapter', () => {
+    const books = [{ id: 'b2', title: 'Other', chapterCount: 3 }]
+    const chapterMode = mount(MoveTargetContent, {
+      props: { mode: 'chapter', books, targetBookId: '__new__', newBookTitle: '' },
+    })
+    expect(chapterMode.text()).toContain('新书名称')
+    const bookMode = mount(MoveTargetContent, {
+      props: { mode: 'book', books, targetBookId: '', newBookTitle: '' },
+    })
+    expect(bookMode.text()).not.toContain('新书名称')
+    expect(bookMode.text()).toContain('会被删除')
+  })
+
+  it('moves a chapter to another book from the book detail', async () => {
+    const store = useBookshelfStore()
+    setTestBooks(store, [{
+      ...book,
+      chapters: [{ id: 'chapter-a', title: 'Vol 1', order: 0, imageCount: 2 }],
+      chapterCount: 1,
+    }])
+    store.setCurrentBook(book.id)
+    vi.spyOn(bookshelfApi, 'getBooks').mockResolvedValue([
+      { ...book },
+      { ...book, id: 'book-2', title: 'Series', chapters: [], chapterCount: 2 },
+    ])
+    const moveSpy = vi.spyOn(bookshelfApi, 'moveChapter').mockResolvedValue({
+      chapterId: 'chapter-a', sourceBookId: book.id, bookId: 'book-2', createdBook: false,
+    })
+    vi.spyOn(bookshelfApi, 'getBookDetail').mockImplementation(async (bookId: string) => (
+      bookId === book.id
+        ? { ...book, chapters: [], chapterCount: 0 }
+        : { ...book, id: 'book-2', title: 'Series', chapters: [], chapterCount: 3 }
+    ))
+    vi.spyOn(bookshelfApi, 'getBookTranslationConstraints').mockResolvedValue({} as never)
+    vi.spyOn(bookshelfApi, 'getBooks')
+    const wrapper = mount(BookDetailModal, {
+      global: {
+        stubs: {
+          BaseModal: BaseModalStub,
+          BookDeleteConfirmContent: true,
+          BookDetailSummary: true,
+          ChapterFormContent: true,
+          ChapterList: ChapterListStub,
+          QuickTagPicker: true,
+        },
+      },
+    })
+    wrapper.getComponent(ChapterListStub).vm.$emit('move', 'chapter-a')
+    await flushPromises()
+    const dialog = wrapper.getComponent(MoveTargetContent)
+    // 不能選自己這本書
+    expect(dialog.props('books')).toEqual([{ id: 'book-2', title: 'Series', chapterCount: 2 }])
+    dialog.vm.$emit('update:targetBookId', 'book-2')
+    await nextTick()
+    const confirm = wrapper.get('section[data-title="移动章节「Vol 1」"]')
+    await confirm.findAllComponents(UiButton).find(button => button.text() === '移动')!.trigger('click')
+    await flushPromises()
+    expect(moveSpy).toHaveBeenCalledWith('chapter-a', { targetBookId: 'book-2' })
+    expect(store.currentBook?.chapters).toEqual([])
+  })
+
+  it('merges the open book into another book and shows the merged book', async () => {
+    const store = useBookshelfStore()
+    setTestBooks(store, [
+      { ...book, chapters: [{ id: 'chapter-a', title: 'Vol 2', order: 0, imageCount: 2 }], chapterCount: 1 },
+      { ...book, id: 'book-2', title: 'Series', chapters: [], chapterCount: 1 },
+    ])
+    store.setCurrentBook(book.id)
+    // 書單只有摘要，沒有章節
+    const { chapters: _omit, ...summary } = book
+    vi.spyOn(bookshelfApi, 'getBooks')
+      .mockResolvedValueOnce([
+        { ...summary }, { ...summary, id: 'book-2', title: 'Series', chapterCount: 1 },
+      ])
+      .mockResolvedValue([{ ...summary, id: 'book-2', title: 'Series', chapterCount: 2 }])
+    const mergeSpy = vi.spyOn(bookshelfApi, 'mergeBookInto').mockResolvedValue({
+      bookId: 'book-2', mergedBookId: book.id, movedChapterIds: ['chapter-a'],
+    })
+    vi.spyOn(bookshelfApi, 'getBookDetail').mockResolvedValue({
+      ...book, id: 'book-2', title: 'Series',
+      chapters: [
+        { id: 'c1', title: 'Vol 1', order: 0, imageCount: 1 },
+        { id: 'chapter-a', title: 'Vol 2', order: 1, imageCount: 2 },
+      ],
+      chapterCount: 2,
+    })
+    const wrapper = mount(BookDetailModal, {
+      global: {
+        stubs: {
+          BaseModal: BaseModalStub,
+          BookDeleteConfirmContent: true,
+          ChapterFormContent: true,
+          ChapterList: ChapterListStub,
+          QuickTagPicker: true,
+        },
+      },
+    })
+    await wrapper.findAllComponents(UiButton).find(button => button.text() === '并入其他书')!.trigger('click')
+    await flushPromises()
+    wrapper.getComponent(MoveTargetContent).vm.$emit('update:targetBookId', 'book-2')
+    await nextTick()
+    const confirm = wrapper.get('section[data-title="把「Demo Book」并入其他书"]')
+    await confirm.findAllComponents(UiButton).find(button => button.text() === '并入')!.trigger('click')
+    await flushPromises()
+    expect(mergeSpy).toHaveBeenCalledWith(book.id, 'book-2')
+    expect(store.currentBook?.id).toBe('book-2')
+    expect(store.currentBook?.chapters?.map(chapter => chapter.title)).toEqual(['Vol 1', 'Vol 2'])
+    expect(store.books.some(item => item.id === book.id)).toBe(false)
   })
 
   it('removes a deleted chapter from the batch selection', async () => {

@@ -263,3 +263,32 @@ def with_glossary_delta(
         existing.add(key)
         added += 1
     return validate_translation_constraints(result), added
+
+
+def merge_translation_constraints(
+    target: Mapping[str, Any],
+    source: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Combine two books' constraints when one book is merged into the other.
+
+    The target keeps its prompt and its entries; entries only the source has are
+    appended, and a list is enabled when either book had it enabled.
+    """
+
+    result = validate_translation_constraints(deepcopy(dict(target)))
+    incoming = validate_translation_constraints(deepcopy(dict(source)))
+    for section, key_field in (("glossary", "source"), ("nonTranslate", "pattern")):
+        mine = result[section]
+        theirs = incoming[section]
+        seen = {(entry["matchMode"], entry[key_field]) for entry in mine["entries"]}
+        for entry in theirs["entries"]:
+            key = (entry["matchMode"], entry[key_field])
+            if key not in seen:
+                mine["entries"].append(entry)
+                seen.add(key)
+        mine["enabled"] = bool(mine["enabled"] or theirs["enabled"])
+    result["glossary"]["autoExtractEnabled"] = bool(
+        result["glossary"]["autoExtractEnabled"]
+        or incoming["glossary"]["autoExtractEnabled"]
+    )
+    return validate_translation_constraints(result)

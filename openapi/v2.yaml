@@ -1923,6 +1923,58 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "423": {$ref: "#/components/responses/Locked"}
+  /chapters/{chapter_id}/move:
+    parameters:
+      - $ref: "#/components/parameters/ChapterId"
+    post:
+      tags: [content]
+      operationId: moveChapter
+      description: Move a chapter to the end of another book, or out into a new book (copies the old book's glossary and tags).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                targetBookId: {type: string}
+                newBookTitle: {type: string}
+      responses:
+        "200":
+          description: Chapter moved.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChapterMoveResult"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "423": {$ref: "#/components/responses/Locked"}
+  /books/{book_id}/merge-into:
+    parameters:
+      - $ref: "#/components/parameters/BookId"
+    post:
+      tags: [content]
+      operationId: mergeBookInto
+      description: Move every chapter of this book into another book and delete this book. Glossaries and tags are combined; the book cover becomes the first chapter's cover.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [targetBookId]
+              properties:
+                targetBookId: {type: string}
+      responses:
+        "200":
+          description: Book merged.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BookMergeResult"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "423": {$ref: "#/components/responses/Locked"}
   /chapters/{chapter_id}/cover:
     parameters:
       - $ref: "#/components/parameters/ChapterId"
@@ -8265,6 +8317,25 @@ components:
       required: [title]
       properties:
         title: {type: string, minLength: 1, maxLength: 500}
+    ChapterMoveResult:
+      type: object
+      additionalProperties: false
+      required: [chapterId, sourceBookId, bookId, createdBook]
+      properties:
+        chapterId: {type: string}
+        sourceBookId: {type: string}
+        bookId: {type: string}
+        createdBook: {type: boolean}
+    BookMergeResult:
+      type: object
+      additionalProperties: false
+      required: [bookId, mergedBookId, movedChapterIds]
+      properties:
+        bookId: {type: string}
+        mergedBookId: {type: string}
+        movedChapterIds:
+          type: array
+          items: {type: string}
     ChapterCoverResult:
       type: object
       additionalProperties: false

@@ -285,6 +285,45 @@ def create_content_blueprint(
             )
         )
 
+    @blueprint.post("/chapters/<chapter_id>/move")
+    def move_chapter(chapter_id: str) -> Response:
+        body = _json_body(allowed_keys={"targetBookId", "newBookTitle"})
+        target = body.get("targetBookId")
+        title = body.get("newBookTitle")
+        if target is not None and not isinstance(target, str):
+            raise ValueError("targetBookId must be a string")
+        if title is not None and not isinstance(title, str):
+            raise ValueError("newBookTitle must be a string")
+        return jsonify(
+            repository.move_chapter(
+                chapter_id=chapter_id,
+                target_book_id=target,
+                new_book_title=title,
+            )
+        )
+
+    @blueprint.post("/books/<book_id>/merge-into")
+    def merge_book_into(book_id: str) -> Response:
+        body = _json_body(allowed_keys={"targetBookId"})
+        result = repository.merge_book_into(
+            book_id=book_id,
+            target_book_id=_required_string(body, "targetBookId"),
+        )
+        cover_asset_id = result.pop("mergedBookCoverAssetId", None)
+        moved = result["movedChapterIds"]
+        # 原書的封面變成它第一個章節（卷）的封面
+        if cover_asset_id and moved:
+            first = str(moved[0])
+            if not chapter_covers.custom_cover_path(Path(data_root), first).is_file():
+                located = media.locate(str(cover_asset_id))
+                if located is not None:
+                    try:
+                        with open(located.path, "rb") as stream:
+                            chapter_covers.save_custom_cover(Path(data_root), first, stream)
+                    except (OSError, ValueError):
+                        pass
+        return jsonify(result)
+
     @blueprint.delete("/chapters/<chapter_id>")
     def delete_chapter(chapter_id: str) -> Response:
         repository.delete_chapter(chapter_id)

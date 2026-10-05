@@ -289,6 +289,22 @@ export function createChaptersExportJob(
   )
 }
 
+export type ChapterMoveResult = components['schemas']['ChapterMoveResult']
+export type BookMergeResult = components['schemas']['BookMergeResult']
+
+/** 把章節移到另一本書的最後，或移出成為一本新書。 */
+export function moveChapter(
+  chapterId: string,
+  target: { targetBookId: string } | { newBookTitle: string },
+): Promise<ChapterMoveResult> {
+  return apiClient.post<ChapterMoveResult>(`${chapterPath(chapterId)}/move`, target)
+}
+
+/** 把整本書的章節併入另一本書，原書會刪除。 */
+export function mergeBookInto(bookId: string, targetBookId: string): Promise<BookMergeResult> {
+  return apiClient.post<BookMergeResult>(bookPath(bookId, '/merge-into'), { targetBookId })
+}
+
 type V2ChapterCoverResult = components['schemas']['ChapterCoverResult']
 
 /** 設定章節（卷）封面。 */

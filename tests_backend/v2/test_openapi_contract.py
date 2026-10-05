@@ -45,6 +45,8 @@ UNKEYED_STATE_COMMANDS = frozenset(
         "reorderChapterPages",
         "reorderChapters",
         "reorderJobs",
+        "mergeBookInto",
+        "moveChapter",
         "setChapterCover",
         "resetQuickWorkspace",
         "resumePausedJob",
