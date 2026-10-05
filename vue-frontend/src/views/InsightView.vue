@@ -4,6 +4,7 @@ import ProductHeaderAction from '@/components/product/ProductHeaderAction.vue'
 import ProductPageHeader from '@/components/product/ProductPageHeader.vue'
 import ProductStatusBanner from '@/components/product/ProductStatusBanner.vue'
 import ProductThemeToggle from '@/components/product/ProductThemeToggle.vue'
+import ProductLanguageToggle from '@/components/product/ProductLanguageToggle.vue'
 import ProductTabbedWorkspace from '@/components/product/ProductTabbedWorkspace.vue'
 import ProductThreePaneWorkspace from '@/components/product/ProductThreePaneWorkspace.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -463,6 +464,7 @@ watch(
           icon-only
           @click="openSettingsModal"
         />
+        <ProductLanguageToggle />
         <ProductThemeToggle class="insight-header__theme-toggle" />
       </template>
     </ProductPageHeader>
@@ -491,7 +493,7 @@ watch(
               <span aria-hidden="true">📖</span>
             </div>
           </div>
-          <h2 class="insight-view__book-title" :title="currentBook?.title">{{ currentBook?.title || '选择书籍' }}</h2>
+          <h2 class="insight-view__book-title" :title="currentBook?.title" :data-no-convert="currentBook?.title ? '' : undefined">{{ currentBook?.title || '选择书籍' }}</h2>
           <div class="insight-view__book-meta">
             <span class="insight-view__book-meta-item">
               <span class="insight-view__book-meta-icon" aria-hidden="true">📄</span>

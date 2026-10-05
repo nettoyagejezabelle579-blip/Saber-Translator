@@ -18,6 +18,7 @@ import ProductHeaderMetaPill from '@/components/product/ProductHeaderMetaPill.vu
 import ProductPageHeader from '@/components/product/ProductPageHeader.vue'
 import ProductStatusBanner from '@/components/product/ProductStatusBanner.vue'
 import ProductThemeToggle from '@/components/product/ProductThemeToggle.vue'
+import ProductLanguageToggle from '@/components/product/ProductLanguageToggle.vue'
 import AppShell from '@/components/ui/AppShell.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiIcon from '@/components/ui/UiIcon.vue'
@@ -370,6 +371,7 @@ async function applyBatchTags() {
       </template>
 
       <template #actions>
+        <ProductLanguageToggle />
         <ProductThemeToggle
           class="bookshelf-header__theme-toggle"
         />

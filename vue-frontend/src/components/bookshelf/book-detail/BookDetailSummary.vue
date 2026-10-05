@@ -74,7 +74,7 @@ function handleCoverError(): void {
       <div v-else class="book-detail-summary__cover-placeholder" aria-label="无封面">📖</div>
     </div>
     <div class="book-detail-summary__meta">
-      <h3 class="book-detail-summary__title">{{ book.title }}</h3>
+      <h3 class="book-detail-summary__title" data-no-convert>{{ book.title }}</h3>
       <div class="book-detail-summary__meta-item">
         <span class="book-detail-summary__meta-label">标签：</span>
         <ProductChipList

@@ -73,9 +73,9 @@ function onCoverError(chapterId: string): void {
           loading="lazy"
           @error="onCoverError(chapter.id)"
         >
-        <span v-else class="chapter-cover__placeholder">{{ chapter.title.slice(0, 6) }}</span>
+        <span v-else class="chapter-cover__placeholder" data-no-convert>{{ chapter.title.slice(0, 6) }}</span>
       </UiButton>
-      <strong class="chapter-cover__title" :title="chapter.title">{{ chapter.title }}</strong>
+      <strong class="chapter-cover__title" :title="chapter.title" data-no-convert>{{ chapter.title }}</strong>
       <small class="chapter-cover__meta">{{ chapter.imageCount ?? 0 }} 页</small>
       <div class="chapter-cover__actions">
         <UiButton

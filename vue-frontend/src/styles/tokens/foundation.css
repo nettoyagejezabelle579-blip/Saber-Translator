@@ -29,10 +29,15 @@
   --z-popover: 1200;
   --z-toast: 1300;
 
-  --font-sans: 'Arial', sans-serif;
+  --font-sans: 'Arial', 'Microsoft JhengHei', 'PingFang TC', 'Noto Sans TC', sans-serif;
   --font-mono: 'Consolas', 'Monaco', monospace;
   --font-jp: 'Noto Sans JP', 'Yu Gothic', 'MS Gothic', sans-serif;
 
   --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   --z-canvas: 10;
+}
+
+/* 简体中文介面使用大陸字形的字型 */
+:root:lang(zh-CN) {
+  --font-sans: 'Arial', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
 }

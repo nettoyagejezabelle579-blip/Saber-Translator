@@ -337,7 +337,7 @@ onUnmounted(() => {
                 <span class="pages-tree-panel__expand-icon">
                   <UiIcon name="chevron-right" size="12" stroke-width="2.5" />
                 </span>
-                <span class="pages-tree-panel__chapter-title">{{ chapter.title }}</span>
+                <span class="pages-tree-panel__chapter-title" data-no-convert>{{ chapter.title }}</span>
               </UiButton>
               <ProductChipList
                 class="pages-tree-panel__chapter-chips"

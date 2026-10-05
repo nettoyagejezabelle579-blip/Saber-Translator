@@ -82,7 +82,7 @@ function handleImageError() {
       </div>
 
       <div class="book-card__info">
-        <h3 class="book-card__title" :title="book.title">{{ book.title }}</h3>
+        <h3 class="book-card__title" :title="book.title" data-no-convert>{{ book.title }}</h3>
         <p class="book-card__chapter-count">{{ book.chapterCount ?? book.chapters?.length ?? 0 }} 章节</p>
         <ProductChipList
           v-if="tagItems.length > 0"

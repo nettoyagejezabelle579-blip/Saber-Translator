@@ -319,7 +319,7 @@ watch(
     <header v-if="controls" class="reader-header">
       <UiButton variant="inverse" size="sm" @click="router.push('/')">← 书架</UiButton>
       <div class="reader-header__title">
-        <strong>{{ book?.title || '阅读器' }}</strong><span>{{ chapterTitle }}</span>
+        <strong :data-no-convert="book?.title ? '' : undefined">{{ book?.title || '阅读器' }}</strong><span data-no-convert>{{ chapterTitle }}</span>
       </div>
       <span class="reader-header__page-info">{{ range }} / {{ images.length }}</span>
       <div class="reader-header__modes">

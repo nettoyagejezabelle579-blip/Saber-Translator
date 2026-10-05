@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { showToast } from './utils/toast'
+import { startUiLanguage } from './i18n/uiLanguage'
 
 import './styles/tokens/foundation.css'
 import './styles/tokens/semantic.css'
@@ -22,4 +23,5 @@ app.config.errorHandler = (err, _instance, info) => {
   showToast(`应用运行出错：${message || info}`, 'error', 5000)
 }
 
-app.mount('#app')
+// 先載入介面語言（預設繁體中文），再顯示畫面，避免先閃過简体
+void startUiLanguage().finally(() => app.mount('#app'))

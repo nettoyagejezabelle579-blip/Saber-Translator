@@ -84,7 +84,7 @@ function close(): void {
           @click="selectChapter(chapter.id)"
         >
           <template #meta>
-            <span class="chapter-select-modal__chapter-title">{{ chapter.title }}</span>
+            <span class="chapter-select-modal__chapter-title" data-no-convert>{{ chapter.title }}</span>
           </template>
 
           <template #actions>

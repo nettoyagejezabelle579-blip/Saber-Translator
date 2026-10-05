@@ -25,6 +25,25 @@ LANGUAGES = (TRADITIONAL, SIMPLIFIED)
 LANGUAGE_LABELS = {TRADITIONAL: "繁體中文（台灣）", SIMPLIFIED: "简体中文"}
 LANGUAGE_FILE = "ui-language.txt"
 _HAN = re.compile(r"[㐀-鿿]")
+# OpenCC 只換字、沒換到的大陸介面用語，轉換後再換成台灣說法（網頁 uiLanguage.ts 有同一份）
+TW_UI_TERMS = (
+    ('(?<!重)新建', '新增'),
+    ('居中', '置中'),
+    ('文本', '文字'),
+    ('配置', '設定'),
+    ('教程', '教學'),
+    ('當前', '目前'),
+    ('撤銷', '復原'),
+    ('賬號', '帳號'),
+    ('賬戶', '帳戶'),
+    ('質量', '品質'),
+    ('模板', '範本'),
+    ('影象', '影像'),
+    ('畫素', '像素'),
+    ('反饋', '回饋'),
+    ('(?<![接線])埠', '連接埠'),
+)
+_TW_UI_TERMS = tuple((re.compile(pattern), replacement) for pattern, replacement in TW_UI_TERMS)
 
 _active = TRADITIONAL
 
@@ -59,7 +78,12 @@ def _converter():
 @lru_cache(maxsize=8192)
 def _convert_cached(text: str) -> str:
     converter = _converter()
-    return converter.convert(text) if converter is not None else text
+    if converter is None:
+        return text
+    converted = converter.convert(text)
+    for pattern, replacement in _TW_UI_TERMS:
+        converted = pattern.sub(replacement, converted)
+    return converted
 
 
 def ui_text(text):

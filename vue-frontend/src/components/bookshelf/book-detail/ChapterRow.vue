@@ -69,7 +69,7 @@ const canSelect = computed(() => imageCount.value > 0)
       />
       <div class="chapter-row__info">
         <span class="chapter-row__order">#{{ index + 1 }}</span>
-        <span class="chapter-row__title">{{ chapter.title }}</span>
+        <span class="chapter-row__title" data-no-convert>{{ chapter.title }}</span>
         <span class="chapter-row__meta">{{ imageCount }} 张图片</span>
         <TaskStatusBadge
           :chapter-id="chapter.id"

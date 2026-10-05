@@ -28,6 +28,7 @@ import EditWorkspace from '@/components/edit/EditWorkspace.vue'
 import ProductHeaderAction from '@/components/product/ProductHeaderAction.vue'
 import ProductPageHeader from '@/components/product/ProductPageHeader.vue'
 import ProductThemeToggle from '@/components/product/ProductThemeToggle.vue'
+import ProductLanguageToggle from '@/components/product/ProductLanguageToggle.vue'
 import { useTextStyleSync } from '@/composables/useTextStyleSync'
 import { useTranslateViewActions } from './useTranslateViewActions'
 import {
@@ -410,6 +411,7 @@ async function handleQuickWorkspacePromoted() {
           icon-name="github"
           icon-only
         />
+        <ProductLanguageToggle />
         <ProductThemeToggle
           class="translate-header__theme-toggle"
           icon-size="lg"
