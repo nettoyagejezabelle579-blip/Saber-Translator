@@ -16,6 +16,11 @@ def main() -> int:
     restore_standard_streams()
     multiprocessing.freeze_support()
 
+    # 舊版留下、缺少 METADATA 的 *.dist-info 不會再讓第三方套件匯入時崩潰
+    from src.backend_v2.metadata_compat import install as install_metadata_compat
+
+    install_metadata_compat()
+
     from src.backend_v2.dispatch import dispatch
 
     return dispatch()

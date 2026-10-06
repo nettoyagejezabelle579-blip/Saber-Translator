@@ -8,7 +8,7 @@ param(
     [int]$WaitPid = 0                     # 先等這個程序（剛才開啟的 Saber-Translator）結束
 )
 $ErrorActionPreference = 'Stop'
-$UpdaterVersion = 3  # 更新程式版本：套用時不會用較舊的更新程式覆蓋這個檔案
+$UpdaterVersion = 4  # 更新程式版本：套用時不會用較舊的更新程式覆蓋這個檔案
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -387,6 +387,29 @@ if (Test-Path -LiteralPath $UpdateInfoFile) {
         if (-not $relative -or $relative -like 'data-v2*') { continue }
         $target = Join-Path $App ($relative -replace '/', '\')
         if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+    }
+}
+# 清掉舊版留下、目前版本沒有的 *.dist-info 資料夾：缺少 METADATA 的舊資料夾會讓
+# importlib.metadata 回傳 None，第三方套件（openai）匯入時就會崩潰。只看 _internal 第一層。
+$ManifestFile = Join-Path $App 'build-manifest.json'
+if (Test-Path -LiteralPath $ManifestFile) {
+    try {
+        $Manifest = Get-Content -LiteralPath $ManifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $Keep = @{}
+        foreach ($name in $Manifest.files.PSObject.Properties.Name) {
+            if ($name -match '^_internal/([^/]+\.dist-info)/') { $Keep[$Matches[1].ToLowerInvariant()] = $true }
+        }
+        if ($Keep.Count -gt 0) {
+            $Internal = Join-Path $App '_internal'
+            foreach ($dir in @(Get-ChildItem -LiteralPath $Internal -Directory -Filter '*.dist-info' -ErrorAction SilentlyContinue)) {
+                if (-not $Keep.ContainsKey($dir.Name.ToLowerInvariant())) {
+                    Remove-Item -LiteralPath $dir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                    Say "已移除舊版留下的 $($dir.Name)" 'DarkGray'
+                }
+            }
+        }
+    } catch {
+        Say "略過清理舊套件資訊：$($_.Exception.Message)" 'DarkGray'
     }
 }
 $NewBuildFile = Join-Path $Work 'BUILD.json.new'

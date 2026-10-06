@@ -20,6 +20,11 @@ function New-Tree([string]$Dist, [string]$Exe, [string[]]$Extra) {
 }
 New-Tree "$Root\v1" 'old program' @('old.txt')
 New-Tree "$Root\v2" 'new program' @('added.txt')
+# 舊版留下、缺少 METADATA 的套件資訊資料夾（曾讓 openai 匯入時崩潰）；新版只有正確的那一個
+New-Item -ItemType Directory -Force -Path "$Root\v1\Saber-Translator\_internal\aiohttp-3.0.0.dist-info\licenses" | Out-Null
+Set-Content "$Root\v1\Saber-Translator\_internal\aiohttp-3.0.0.dist-info\licenses\LICENSE.txt" 'stale'
+New-Item -ItemType Directory -Force -Path "$Root\v2\Saber-Translator\_internal\aiohttp-3.14.4.dist-info" | Out-Null
+Set-Content "$Root\v2\Saber-Translator\_internal\aiohttp-3.14.4.dist-info\METADATA" 'Version: 3.14.4'
 # 中文檔名（實際程式內的字型就是中文檔名）也要能正確解壓與複製
 New-Item -ItemType Directory -Force -Path "$Root\v2\Saber-Translator\_internal\fonts" | Out-Null
 Set-Content -LiteralPath "$Root\v2\Saber-Translator\_internal\fonts\思源黑體-測試.ttf" 'font'
@@ -53,6 +58,8 @@ function Assert-Updated([string]$Install, [bool]$Incremental) {
     if ((Get-Content "$Install\BUILD.json" -Raw | ConvertFrom-Json).build -ne 'bbb2222') { throw "$Install build id not updated" }
     if ($Incremental -and (Test-Path "$Install\old.txt")) { throw "$Install deleted file still present" }
     if (Test-Path "$Install\UPDATE-INFO.json") { throw "$Install UPDATE-INFO.json left behind" }
+    if (Test-Path "$Install\_internal\aiohttp-3.0.0.dist-info") { throw "$Install stale dist-info left behind" }
+    if (-not (Test-Path "$Install\_internal\aiohttp-3.14.4.dist-info\METADATA")) { throw "$Install current dist-info removed" }
 }
 
 $incremental = New-Install 'install-incremental' $true
