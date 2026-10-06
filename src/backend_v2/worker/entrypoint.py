@@ -42,6 +42,28 @@ from src.shared.user_logging import inline_log_text, user_log
 LOGGER = logging.getLogger("saber.worker")
 
 
+WORKER_SERVICE_MODULES = (
+    "src.backend_v2.jobs.repository",
+    "src.backend_v2.jobs.worker_loop",
+    "src.backend_v2.insight.worker",
+    "src.backend_v2.insight.derived",
+    "src.backend_v2.insight.continuation",
+    "src.backend_v2.insight.qa",
+    "src.backend_v2.insight.exports",
+    "src.backend_v2.operations.executor",
+    "src.backend_v2.operations.repair",
+    "src.backend_v2.operations.repository",
+    "src.backend_v2.plugins.runtime",
+    "src.backend_v2.plugins.agent_worker",
+    "src.backend_v2.translation.interactive_operations",
+    "src.backend_v2.translation.auxiliary",
+    "src.backend_v2.translation.pipeline",
+    "src.backend_v2.content.image_import",
+    "src.backend_v2.transfer.worker",
+    "src.backend_v2.web_import.worker",
+)
+
+
 def _insight_layer_handler(step_kind: str, service: Any):
     prefix = "insight_build_layer_"
     suffix = step_kind.removeprefix(prefix)
@@ -111,6 +133,11 @@ def run_worker(args: object) -> int:
             raise RuntimeError("Launcher-issued Worker epoch is missing, expired, or invalid")
 
     if args.probe:
+        # 打包檢查：載入 Worker 會用到的所有模組，第三方套件匯入失敗（例如缺少套件資訊）在建置時就會發現
+        import importlib
+
+        for module_name in WORKER_SERVICE_MODULES:
+            importlib.import_module(module_name)
         print(
             json.dumps(
                 {

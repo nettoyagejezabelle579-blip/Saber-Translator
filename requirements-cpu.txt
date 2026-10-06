@@ -29,7 +29,7 @@ img2pdf
 reportlab
 
 # AI/OCR
-openai
+openai==3.24.0  # 固定版本：新版本可能改變匯入行為（3.24 起需要 aiohttp 套件資訊）
 opencc-python-reimplemented  # 譯文簡轉繁（台灣/香港）
 manga-ocr==0.1.16  # Transformers 5 tokenizer compatibility
 rapidocr==3.9.2  # PP-OCRv6 ONNX runtime wrapper

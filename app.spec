@@ -93,6 +93,9 @@ metadata_packages = [
     'manga_ocr',
     'rapidocr',
     'sentencepiece',
+    # openai 3.24+ 匯入時用 importlib.metadata 讀 aiohttp 版本；沒有套件資訊會讓 Worker 啟動即崩潰
+    'aiohttp',
+    'openai',
 ]
 for pkg in metadata_packages:
     datas += copy_metadata(pkg)
