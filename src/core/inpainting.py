@@ -104,6 +104,74 @@ def _bubble_region_mask(shape, coords, polygon):
     return region.astype(bool)
 
 
+def _outline_aware_mask(image_rgb, repair_mask, bubble_coords):
+    """把文字的外框、光暈、抗鋸齒邊一起納入去字遮罩。
+
+    精確文字遮罩只蓋住字的筆畫；彩色畫面上的字常有粗白框和柔和的光暈，固定膨脹
+    幾個像素蓋不完，修復後就留下白色殘影。這裡在每個文字框附近：
+    1. 用「離字夠遠」的像素做大範圍加權模糊，估計逐像素的背景色（漸層畫面也適用）；
+    2. 離字 R 像素以內、和背景色明顯不同的像素視為外框／光暈；
+    3. 只保留和文字筆畫相連的那些（不會吃掉旁邊不相連的畫面線條）。
+    R 依筆畫粗細而定，並有上限，不會擴到遠處的畫面。回傳新的 bool 遮罩。
+    """
+    height, width = repair_mask.shape
+    expanded = repair_mask.copy()
+    page_scale = max(height, width)
+    for x1, y1, x2, y2 in bubble_coords:
+        box_w, box_h = x2 - x1, y2 - y1
+        if box_w <= 2 or box_h <= 2:
+            continue
+        limit = max(8, round(page_scale / 25))
+        cx1, cy1 = max(0, x1 - 3 * limit), max(0, y1 - 3 * limit)
+        cx2, cy2 = min(width, x2 + 3 * limit), min(height, y2 + 3 * limit)
+        text = repair_mask[cy1:cy2, cx1:cx2]
+        if not text.any():
+            continue
+        crop = image_rgb[cy1:cy2, cx1:cx2].astype(np.float32)
+        # 筆畫粗細：遮罩內距離轉換的高百分位約為半個筆畫寬
+        inside = cv2.distanceTransform(text.astype(np.uint8), cv2.DIST_L2, 3)
+        stroke = max(1.0, float(np.percentile(inside[text], 90)) * 2.0)
+        # 外框加光暈通常不超過幾個筆畫寬；上限避免擴到遠處的畫面
+        radius = int(min(limit, max(8.0, 4.0 * stroke + 6)))
+        distance = cv2.distanceTransform((~text).astype(np.uint8), cv2.DIST_L2, 3)
+        far = (distance > radius + 1).astype(np.float32)
+        if far.sum() < 50:
+            continue
+        # 局部平均色與局部起伏（紋理）：網點畫面上，白框是「沒有網點的平滑區」，
+        # 只看單一像素顏色分不出白框和網點間的白紙
+        window = max(5, round(page_scale / 220)) | 1
+        local_mean = cv2.blur(crop, (window, window))
+        local_sq = cv2.blur(crop * crop, (window, window))
+        local_std = np.sqrt(np.maximum(local_sq - local_mean * local_mean, 0.0)).mean(axis=2)
+        # 逐像素背景：只用遠處像素做加權模糊（normalized convolution），漸層畫面也適用
+        sigma = max(4.0, 1.5 * radius)
+        weight = cv2.GaussianBlur(far, (0, 0), sigma)
+        safe_weight = np.maximum(weight, 1e-3)
+        background = np.stack(
+            [cv2.GaussianBlur(local_mean[:, :, c] * far, (0, 0), sigma) for c in range(3)], axis=2
+        ) / safe_weight[:, :, None]
+        background_std = cv2.GaussianBlur(local_std * far, (0, 0), sigma) / safe_weight
+        valid = weight > 0.02
+        difference = np.abs(local_mean - background).max(axis=2)
+        far_valid = (far > 0) & valid
+        noise = float(np.percentile(difference[far_valid], 90)) if far_valid.any() else 0.0
+        threshold = max(18.0, noise + 12.0)
+        textured = background_std > 12.0
+        smooth_patch = textured & (local_std < 0.4 * background_std)
+        candidate = (distance <= radius) & valid & ((difference > threshold) | smooth_patch)
+        joined = (candidate | text).astype(np.uint8)
+        count, labels = cv2.connectedComponents(joined, connectivity=8)
+        if count <= 1:
+            continue
+        attached = np.unique(labels[text])
+        grow = np.isin(labels, attached[attached > 0]) & candidate
+        if grow.any():
+            # 光暈邊緣再補 1px，避免留下一圈淡淡的亮邊
+            grow = cv2.dilate(grow.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            expanded[cy1:cy2, cx1:cx2] |= grow & (distance <= radius + 1)
+    return expanded
+
+
 def _residue_mask(result, repaired_mask):
     """找出去字後黏在修復區外緣的殘留（白邊、彩色描邊、抗鋸齒灰邊）。
 
@@ -358,7 +426,8 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
 
     converted_image = image_pil.convert('RGB')
     try:
-        image_size = np.array(converted_image).shape
+        image_rgb = np.array(converted_image)
+        image_size = image_rgb.shape
     finally:
         if converted_image is not image_pil:
             converted_image.close()
@@ -426,6 +495,15 @@ def inpaint_bubbles(image_pil, bubble_coords, method=constants.DEFAULT_INPAINT_M
             dilated = cv2.dilate(inverted, kernel, iterations=1)
             bubble_mask_np = 255 - dilated
             logger.debug(f"掩膜膨胀: {mask_dilate_size}px")
+
+        if getattr(constants, "OUTLINE_AWARE_MASK", False):
+            # 字的白框、光暈、抗鋸齒邊一起去掉，修復後才不會留下白色殘影
+            repair = bubble_mask_np < 128
+            grown = _outline_aware_mask(image_rgb, repair, bubble_coords)
+            added = int(grown.sum() - repair.sum())
+            if added > 0:
+                logger.debug("去字遮罩納入外框／光暈：%d px", added)
+                bubble_mask_np = np.where(grown, 0, 255).astype(np.uint8)
         
     else:
         # 使用坐标/多边形生成掩膜

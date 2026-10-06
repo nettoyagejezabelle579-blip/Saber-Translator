@@ -209,6 +209,8 @@ ADAPTIVE_MASK_DILATE = True
 REPAIR_DESPECKLE = True
 # 去字後二次修復：清掉黏在修復區外緣的白邊、彩色描邊殘留（網點、畫面上也有效）
 REPAIR_RESIDUE_CLEANUP = True
+# 去字前把字的白框、光暈、抗鋸齒邊（和筆畫相連、和背景色明顯不同）一起納入遮罩
+OUTLINE_AWARE_MASK = True
 
 # MangaOCR 加強：每次讀取都算信心分數（平均 token 對數機率），低於門檻就用整理過的圖
 # （提高對比、二值化去網點、補成方形）重讀，取最有把握的結果；合成漫畫字評測錯字率 2.2% → 1.73%
