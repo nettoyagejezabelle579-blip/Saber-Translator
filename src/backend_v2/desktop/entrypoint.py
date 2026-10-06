@@ -345,6 +345,7 @@ class DesktopController(QObject):
         self.window.settings_changed.connect(self.apply_settings)
         self.window.job_command_requested.connect(self.tasks.command)
         self.window.queue_pause_requested.connect(self.tasks.set_queue_paused)
+        self.window.job_reorder_requested.connect(self.tasks.reorder)
         self.window.quit_requested.connect(self.request_quit)
         self.launcher_status.connect(self._on_launcher_status)
         self.launcher_output.connect(self.window.add_log)

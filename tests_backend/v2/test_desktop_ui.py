@@ -1106,3 +1106,90 @@ def test_log_page_works_with_the_traditional_interface() -> None:
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
     assert "工作日志" not in result.stdout.split("SHOWN", 1)[1].split("\n", 1)[0]
+
+
+def test_reordered_job_ids_moves_one_job() -> None:
+    from src.backend_v2.desktop.window import reordered_job_ids
+
+    order = ["a", "b", "c", "d"]
+    assert reordered_job_ids(order, "c", "top") == ["c", "a", "b", "d"]
+    assert reordered_job_ids(order, "c", "up") == ["a", "c", "b", "d"]
+    assert reordered_job_ids(order, "b", "down") == ["a", "c", "b", "d"]
+    assert reordered_job_ids(order, "b", "bottom") == ["a", "c", "d", "b"]
+    assert reordered_job_ids(order, "a", "up") is None
+    assert reordered_job_ids(order, "d", "bottom") is None
+    assert reordered_job_ids(order, "x", "top") is None
+
+
+def test_desktop_queue_tab_reorders_waiting_jobs() -> None:
+    """排隊中分頁也能調整順序（與網頁任務中心相同）。"""
+    app = _app()
+    page = TaskCenterPage()
+    page.setStyleSheet(WINDOW_STYLESHEET)
+    page.resize(1100, 640)
+    queued = [
+        {"jobId": job_id, "kind": "translation", "status": "queued", "createdAt": "2026-10-06T07:05:02"}
+        for job_id in ("job-a", "job-b", "job-c")
+    ]
+    locked = {
+        "jobId": "job-locked", "kind": "translation", "status": "queued",
+        "blockedReason": "retained_chapter_lock", "createdAt": "2026-10-06T07:05:02",
+    }
+    page.set_jobs([*queued, locked], [], False, True, False, None)
+    requests: list[list[str]] = []
+    page.reorder_requested.connect(requests.append)
+    page.show()
+    app.processEvents()
+
+    table = page.tables[1]
+    assert table.columnWidth(5) == TaskCenterPage.QUEUE_ACTION_COLUMN_WIDTH
+
+    def buttons(row: int) -> dict[str, QPushButton]:
+        widget = table.cellWidget(row, 5)
+        assert widget is not None
+        return {button.text(): button for button in widget.findChildren(QPushButton)}
+
+    first, middle, last = buttons(0), buttons(1), buttons(2)
+    assert list(first) == ["置顶", "上移", "下移", "置底", "取消"]
+    assert not first["置顶"].isEnabled() and not first["上移"].isEnabled()
+    assert last["下移"].isEnabled() is False and last["置底"].isEnabled() is False
+    # 被章節鎖保留的任務不能移動，只有取消
+    assert list(buttons(3)) == ["取消"]
+    widget = table.cellWidget(0, 5)
+    assert widget.layout().minimumSize().width() <= table.columnWidth(5)
+
+    first["下移"].click()
+    middle["置顶"].click()
+    last["上移"].click()
+    assert requests == [
+        ["job-b", "job-a", "job-c"],
+        ["job-b", "job-a", "job-c"],
+        ["job-a", "job-c", "job-b"],
+    ]
+    page.close()
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_task_client_sends_the_whole_queue_order() -> None:
+    _app()
+    client = TaskApiClient()
+    client._running = True
+    client._base_url = "http://127.0.0.1:5000"
+    sent: list[tuple[str, bytes]] = []
+
+    class _Reply:
+        class finished:  # noqa: N801 - mimics a Qt signal
+            @staticmethod
+            def connect(_slot) -> None:
+                return None
+
+    def fake_post(request, body):
+        sent.append((request.url().toString(), bytes(body)))
+        return _Reply()
+
+    client._manager.post = fake_post  # type: ignore[method-assign]
+    client.reorder(["job-b", "job-a"])
+    assert sent == [("http://127.0.0.1:5000/api/v2/jobs/reorder", b'{"orderedJobIds": ["job-b", "job-a"]}')]
+    with pytest.raises(ValueError):
+        client.reorder(["job-a", "job-a"])

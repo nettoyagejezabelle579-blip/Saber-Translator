@@ -411,11 +411,31 @@ def _progress_summary(progress: object) -> tuple[int, str]:
     return percent, f"{step} · {done} / {total}" if total else step
 
 
+REORDER_ACTIONS = (("置顶", "top"), ("上移", "up"), ("下移", "down"), ("置底", "bottom"))
+
+
+def reordered_job_ids(order: list[str], job_id: str, action: str) -> list[str] | None:
+    """New queue order after moving one job (None when it would not change)."""
+    if job_id not in order:
+        return None
+    ordered = list(order)
+    index = ordered.index(job_id)
+    target = {"top": 0, "up": index - 1, "down": index + 1, "bottom": len(ordered) - 1}[action]
+    if target < 0 or target >= len(ordered) or target == index:
+        return None
+    ordered.pop(index)
+    ordered.insert(target, job_id)
+    return ordered
+
+
 class TaskCenterPage(QWidget):
     command_requested = Signal(str, str)
     queue_pause_requested = Signal(bool)
+    reorder_requested = Signal(list)
 
     ACTION_COLUMN_WIDTH = 164
+    # 排隊中多了置頂／上移／下移／置底
+    QUEUE_ACTION_COLUMN_WIDTH = 400
 
     def __init__(self) -> None:
         super().__init__()
@@ -442,6 +462,11 @@ class TaskCenterPage(QWidget):
         self.tables = [self._create_table() for _ in range(3)]
         for title, table in zip(("当前", "排队中", "最近完成"), self.tables, strict=True):
             self.tabs.addTab(table, title)
+        # 排隊中：進度一定是 0%，隱藏以騰出排序按鈕的空間
+        self.tables[1].setColumnHidden(3, True)
+        self.tables[1].setColumnWidth(4, 150)
+        self.tables[1].setColumnWidth(5, self.QUEUE_ACTION_COLUMN_WIDTH)
+        self._sortable_ids: list[str] = []
         layout.addWidget(self.tabs, 1)
 
     @staticmethod
@@ -502,13 +527,25 @@ class TaskCenterPage(QWidget):
         queue_list = list(queue)
         active = [job for job in queue_list if job.get("status") != "queued"]
         waiting = [job for job in queue_list if job.get("status") == "queued"]
+        # 可調整順序的排隊任務（與網頁相同：被章節鎖保留的任務不能移動）
+        self._sortable_ids = [
+            str(job.get("jobId") or "")
+            for job in waiting
+            if job.get("blockedReason") != "retained_chapter_lock" and job.get("jobId")
+        ]
         self._populate(self.tables[0], active)
-        self._populate(self.tables[1], waiting)
+        self._populate(self.tables[1], waiting, reorderable=True)
         self._populate(self.tables[2], list(history))
         self.tabs.setTabText(0, f"当前 {len(active)}")
         self.tabs.setTabText(1, f"排队中 {len(waiting)}")
 
-    def _populate(self, table: QTableWidget, jobs: list[Mapping[str, object]]) -> None:
+    def _populate(
+        self,
+        table: QTableWidget,
+        jobs: list[Mapping[str, object]],
+        *,
+        reorderable: bool = False,
+    ) -> None:
         table.setRowCount(len(jobs))
         for row, job in enumerate(jobs):
             kind = str(job.get("kind") or "")
@@ -527,10 +564,15 @@ class TaskCenterPage(QWidget):
                 if column in {1, 3}:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 table.setItem(row, column, item)
-            table.setCellWidget(row, 5, self._actions(job))
+            table.setCellWidget(row, 5, self._actions(job, reorderable=reorderable))
             table.setRowHeight(row, 58)
 
-    def _actions(self, job: Mapping[str, object]) -> QWidget:
+    def _request_reorder(self, job_id: str, action: str) -> None:
+        ordered = reordered_job_ids(self._sortable_ids, job_id, action)
+        if ordered is not None:
+            self.reorder_requested.emit(ordered)
+
+    def _actions(self, job: Mapping[str, object], *, reorderable: bool = False) -> QWidget:
         wrapper = QWidget()
         wrapper.setObjectName("actionCell")
         layout = QHBoxLayout(wrapper)
@@ -548,6 +590,16 @@ class TaskCenterPage(QWidget):
         if status in {"queued", "running", "paused", "interrupted"}:
             actions.append(("取消", "cancel"))
         layout.addStretch()
+        if reorderable and job_id in self._sortable_ids:
+            for label, move in REORDER_ACTIONS:
+                button = QPushButton(label)
+                button.setObjectName("compactButton")
+                button.setMinimumWidth(50)
+                button.setEnabled(reordered_job_ids(self._sortable_ids, job_id, move) is not None)
+                button.clicked.connect(
+                    lambda _checked=False, job_id=job_id, move=move: self._request_reorder(job_id, move)
+                )
+                layout.addWidget(button)
         for label, action in actions:
             button = QPushButton(label)
             button.setObjectName("compactButton")
@@ -1162,6 +1214,7 @@ class DesktopWindow(QMainWindow):
     settings_changed = Signal(object)
     job_command_requested = Signal(str, str)
     queue_pause_requested = Signal(bool)
+    job_reorder_requested = Signal(list)
 
     def __init__(
         self,
@@ -1254,6 +1307,7 @@ class DesktopWindow(QMainWindow):
         self.overview.open_web_requested.connect(self.open_web_requested)
         self.tasks.command_requested.connect(self.job_command_requested)
         self.tasks.queue_pause_requested.connect(self.queue_pause_requested)
+        self.tasks.reorder_requested.connect(self.job_reorder_requested)
         self.settings.settings_changed.connect(self.settings_changed)
         self.resize(settings.window_width, settings.window_height)
         self._preparing = False

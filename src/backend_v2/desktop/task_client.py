@@ -122,6 +122,24 @@ class TaskApiClient(QObject):
             )
         )
 
+    def reorder(self, ordered_job_ids: list[str]) -> None:
+        """Set the order of the whole ordinary queue (same command as the web task centre)."""
+        ids = [str(job_id) for job_id in ordered_job_ids if str(job_id).strip()]
+        if not ids or len(set(ids)) != len(ids):
+            raise ValueError("ordered job ids must be unique and non-empty")
+        if not self._running or not self._base_url:
+            self.error.emit("任务操作失败：后端尚未连接")
+            return
+        request = self._json_request("/api/v2/jobs/reorder")
+        body = json.dumps({"orderedJobIds": ids}).encode("utf-8")
+        reply = self._manager.post(request, QByteArray(body))
+        generation = self._generation
+        reply.finished.connect(
+            lambda reply=reply, generation=generation: self._finish_command(
+                reply, generation
+            )
+        )
+
     def _json_request(self, path: str) -> QNetworkRequest:
         request = QNetworkRequest(QUrl(f"{self._base_url}{path}"))
         request.setRawHeader(b"Accept", b"application/json")
