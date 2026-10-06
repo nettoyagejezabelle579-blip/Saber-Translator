@@ -135,6 +135,7 @@ function toggleAll() {
       @set-cover="(chapterId, file) => $emit('setCover', chapterId, file)"
       @clear-cover="$emit('clearCover', $event)"
       @move="$emit('move', $event)"
+      @rename="$emit('edit', $event)"
     />
     <ProductScrollStack
       v-else-if="chapters.length > 0"

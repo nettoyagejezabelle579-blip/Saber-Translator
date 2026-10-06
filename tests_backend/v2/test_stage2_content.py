@@ -2966,3 +2966,61 @@ def test_move_is_refused_while_a_job_uses_the_book(content_platform) -> None:
     )
     assert refused.status_code == 423
     assert _titles(repository, str(book["id"])) == ["Chapter"]
+
+
+def test_translations_and_covers_move_with_the_chapter(content_platform) -> None:
+    """移動章節或併書後，譯文（氣泡文字）、頁面與章節封面都跟著走。"""
+    data_root, engine, repository, _storage, importer, book, chapter = content_platform
+    client = _move_client(data_root, engine)
+    chapter_id = str(chapter["id"])
+    imported, _ = _import(
+        repository,
+        importer,
+        chapter_id=chapter_id,
+        payload=_image_bytes((60, 80)),
+        logical_path="translated.png",
+        key="move-translated",
+    )
+    page_id = str(imported["page"]["id"])
+    repository.mutate_page_document(
+        page_id=page_id,
+        base_revision=1,
+        mutations=[{
+            "op": "create",
+            "clientMutationId": "move-bubble",
+            "fields": _bubble_fields(originalText="勇者が来た", translatedText="勇者來了"),
+        }],
+        idempotency_key="move-bubble",
+    )
+    assert client.put(
+        f"/api/v2/chapters/{chapter_id}/cover",
+        data={"cover": (BytesIO(_image_bytes((300, 450), color=(20, 20, 220))), "c.png")},
+    ).status_code == 200
+
+    def assert_chapter_intact(expected_book_id: str) -> None:
+        document = client.get(f"/api/v2/pages/{page_id}/document").get_json()
+        bubble = document["bubbles"][0]["payload"]
+        assert bubble["translatedText"] == "勇者來了"
+        assert bubble["originalText"] == "勇者が来た"
+        pages_listed = repository.list_pages(chapter_id=chapter_id, all_pages=True)["items"]
+        assert [str(item["id"]) for item in pages_listed] == [page_id]
+        listed = client.get(f"/api/v2/books/{expected_book_id}").get_json()["chapters"]
+        moved = next(item for item in listed if item["id"] == chapter_id)
+        assert moved["hasCustomCover"] is True
+        assert moved["pageCount"] == 1
+
+    target = repository.create_book(title="Target")
+    assert client.post(
+        f"/api/v2/chapters/{chapter_id}/move", json={"targetBookId": str(target["id"])}
+    ).status_code == 200
+    assert_chapter_intact(str(target["id"]))
+
+    series = repository.create_book(title="Series")
+    assert client.post(
+        f"/api/v2/books/{target['id']}/merge-into", json={"targetBookId": str(series["id"])}
+    ).status_code == 200
+    assert_chapter_intact(str(series["id"]))
+
+    out = client.post(f"/api/v2/chapters/{chapter_id}/move", json={"newBookTitle": "番外"}).get_json()
+    assert_chapter_intact(out["bookId"])
+    assert str(book["id"]) != out["bookId"]

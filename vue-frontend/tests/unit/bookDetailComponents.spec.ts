@@ -360,6 +360,9 @@ describe('bookshelf detail child components', () => {
     expect(cards[0]!.text()).not.toContain('用第一页')
     await cards[1]!.findAll('button').find(button => button.text() === '用第一页')!.trigger('click')
     expect(wrapper.emitted('clearCover')).toEqual([['c2']])
+    // 封面模式也能改章節名稱（沿用同一個編輯章節視窗）
+    await cards[0]!.findAll('button').find(button => button.text() === '改名')!.trigger('click')
+    expect(wrapper.emitted('edit')).toEqual([['c1']])
 
     // 切換成列表後會記住
     await wrapper.findAll('button').find(button => button.text() === '列表显示')!.trigger('click')
