@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from src.shared.ai_providers import (
+    current_model_name,
     WEB_IMPORT_AGENT_CAPABILITY,
     get_provider_manifest,
     normalize_provider_id,
@@ -127,7 +128,7 @@ class MangaScraperAgent:
         self.provider = normalize_provider_id(provider)
         self.api_key = api_key
         self.base_url = base_url
-        self.model_name = model_name
+        self.model_name = current_model_name(self.provider, model_name)
         self.use_stream = use_stream
         self.force_json = force_json
         self.max_retries = max_retries

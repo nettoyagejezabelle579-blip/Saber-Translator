@@ -352,3 +352,22 @@ def resolve_provider_base_url_for_capability(
 def resolve_provider_endpoint_for_capability(provider: Optional[str], capability: str) -> Optional[str]:
     manifest = get_provider_manifest(provider)
     return manifest.capability_endpoints.get(capability)
+
+
+# 服務商已停用、改名的模型：送出前換成目前的名稱，舊設定不用手動修改。
+# DeepSeek 於 2026 年停用 deepseek-chat / deepseek-reasoner（API 只接受 deepseek-flash、
+# deepseek-v4-pro）；仍送舊名稱時伺服器回 400「missing `input.type` parameter」。
+RETIRED_MODEL_NAMES: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "deepseek-chat": "deepseek-flash",
+        "deepseek-reasoner": "deepseek-flash",
+    },
+}
+
+
+def current_model_name(provider: str, model: str) -> str:
+    """Model name the provider currently accepts (retired aliases are replaced)."""
+    if not isinstance(model, str):
+        return model
+    replacements = RETIRED_MODEL_NAMES.get(str(provider or "").strip().lower(), {})
+    return replacements.get(model.strip().lower(), model)

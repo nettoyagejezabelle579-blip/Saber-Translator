@@ -74,7 +74,7 @@ export const DEFAULT_TRANSLATION_SERVICE: TranslationServiceSettings = {
   // DeepSeek: strong Japanese→Chinese, cheap and fast, fewer refusals on adult fiction.
   provider: 'deepseek',
   apiKey: '',
-  modelName: 'deepseek-chat',
+  modelName: 'deepseek-flash',
   customBaseUrl: '',
   openaiOptions: createDefaultOpenAiOptions({
     execution: {

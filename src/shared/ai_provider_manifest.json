@@ -29,11 +29,11 @@
     "supportsStream": true,
     "supportsJsonResponse": true,
     "defaultModels": {
-      "vlm": "deepseek-chat",
-      "chat": "deepseek-chat"
+      "vlm": "deepseek-flash",
+      "chat": "deepseek-flash"
     },
     "modelCatalogs": {
-      "vlm": ["deepseek-chat"]
+      "vlm": ["deepseek-flash", "deepseek-v4-pro"]
     }
   },
   {

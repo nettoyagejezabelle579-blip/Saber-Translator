@@ -213,7 +213,7 @@ def default_translation_settings() -> dict[str, object]:
         "translation": {
             # DeepSeek：日譯中品質好、便宜、速度快，對成人虛構內容的翻譯限制較少
             "provider": "deepseek",
-            "modelName": "deepseek-chat",
+            "modelName": "deepseek-flash",
             "customBaseUrl": "",
             "openaiOptions": openai_options(
                 use_stream=True,

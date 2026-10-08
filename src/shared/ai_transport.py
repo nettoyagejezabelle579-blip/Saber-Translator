@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 import httpx
 
 from src.shared.ai_providers import (
+    current_model_name,
     CHAT_CAPABILITY,
     CONNECTION_TEST_CAPABILITY,
     EMBEDDING_CAPABILITY,
@@ -160,6 +161,7 @@ class UnifiedChatRequest:
         if self.api_key is not None and not isinstance(self.api_key, str):
             raise ValueError("api_key 必须是字符串或 null")
         _require_nonempty_string(self.model, name="model")
+        self.model = current_model_name(self.provider, self.model)
         if not isinstance(self.messages, list) or not self.messages:
             raise ValueError("messages 必须是非空列表")
         for message in self.messages:
@@ -230,6 +232,7 @@ class UnifiedVisionRequest:
         if self.api_key is not None and not isinstance(self.api_key, str):
             raise ValueError("api_key 必须是字符串或 null")
         _require_nonempty_string(self.model, name="model")
+        self.model = current_model_name(self.provider, self.model)
         _require_nonempty_string(self.prompt, name="prompt")
         _require_nonempty_string(self.image_base64, name="image_base64")
         if self.image_media_type not in {
@@ -279,6 +282,7 @@ class UnifiedEmbeddingRequest:
         if self.api_key is not None and not isinstance(self.api_key, str):
             raise ValueError("api_key 必须是字符串或 null")
         _require_nonempty_string(self.model, name="model")
+        self.model = current_model_name(self.provider, self.model)
         self.inputs = _require_string_list(self.inputs, name="inputs")
         self.credential_version_id = _require_optional_string(
             self.credential_version_id,
@@ -309,6 +313,7 @@ class UnifiedRerankRequest:
         if self.api_key is not None and not isinstance(self.api_key, str):
             raise ValueError("api_key 必须是字符串或 null")
         _require_nonempty_string(self.model, name="model")
+        self.model = current_model_name(self.provider, self.model)
         _require_nonempty_string(self.query, name="query")
         self.documents = _require_string_list(self.documents, name="documents")
         self.top_n = _require_positive_int(self.top_n, name="top_n")
@@ -342,6 +347,7 @@ class ProviderConnectionTestRequest:
         if self.api_key is not None and not isinstance(self.api_key, str):
             raise ValueError("api_key 必须是字符串或 null")
         _require_nonempty_string(self.model, name="model")
+        self.model = current_model_name(self.provider, self.model)
         self.base_url = _require_optional_string(self.base_url, name="base_url")
         _require_nonempty_string(self.prompt, name="prompt")
         if self.system_prompt is not None and not isinstance(self.system_prompt, str):

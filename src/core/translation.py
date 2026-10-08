@@ -471,7 +471,7 @@ def _parse_batch_response(response_text: str, expected_count: int) -> list[str]:
             raise TranslationParseException(
                 "模型拒絕翻譯這一頁（內容審查）："
                 f"「{cleaned_text[:40]}」。成人內容請改用不審查的模型，"
-                "例如官方 DeepSeek（deepseek-chat）或 xAI Grok"
+                "例如官方 DeepSeek（deepseek-flash）或 xAI Grok"
             )
         raise TranslationParseException(
             "无法在响应中找到批量翻译的编号格式 <|n|>"
