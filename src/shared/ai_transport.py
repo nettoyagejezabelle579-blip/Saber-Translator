@@ -392,6 +392,74 @@ def _build_chat_body(
     return body
 
 
+# ---- Responses API 備援 -------------------------------------------------------
+# 有些服務商（例如火山方舟上的 DeepSeek V4）對 /chat/completions 回
+# 400「missing `input.type` parameter」：伺服器把請求當成 Responses 格式處理。
+# 遇到這個錯誤就改用 /responses 重送一次，之後同一個服務位址＋模型直接走 /responses。
+_RESPONSES_ONLY_MODELS: set[tuple[str, str]] = set()
+
+
+def _needs_responses_api(error: Exception) -> bool:
+    text = str(error)
+    return text.startswith("API 错误 400") and "input.type" in text
+
+
+def _responses_key(base_url: str, model: str) -> tuple[str, str]:
+    return (base_url.rstrip("/").lower(), model.strip().lower())
+
+
+def _build_responses_body(
+    request: "UnifiedChatRequest",
+    invocation: Optional[ResolvedOpenAICompatibleInvocation] = None,
+) -> Dict[str, Any]:
+    effective_options = invocation.effective_options if invocation else request.openai_options
+    items: List[Dict[str, Any]] = []
+    for message in request.messages:
+        role = str(message.get("role") or "user")
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "\n".join(
+                str(part.get("text") or "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") in (None, "text", "input_text")
+            )
+        else:
+            text = "" if content is None else str(content)
+        items.append({"type": "message", "role": role, "content": text})
+    body: Dict[str, Any] = {"model": request.model, "input": items}
+    if effective_options.request.temperature is not None:
+        body["temperature"] = effective_options.request.temperature
+    if effective_options.request.force_json_output:
+        body["text"] = {"format": {"type": "json_object"}}
+    extra_body = validate_and_clone_openai_extra_body(
+        effective_options.request.extra_body,
+        prefix="openai_options.request.extra_body",
+    )
+    if extra_body:
+        body.update(extra_body)
+    return body
+
+
+def _extract_responses_text(payload: Dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        raise ValueError("AI 响应必须是 JSON 对象")
+    pieces: List[str] = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") not in (None, "message"):
+            continue
+        for part in item.get("content") or []:
+            if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
+                text = part.get("text")
+                if isinstance(text, str):
+                    pieces.append(text)
+    content = "".join(pieces).strip()
+    if not content and isinstance(payload.get("output_text"), str):
+        content = payload["output_text"].strip()
+    if not content:
+        raise OpenAICompatibleEmptyContentError("AI 未返回有效内容")
+    return content
+
+
 def _build_embedding_body(request: UnifiedEmbeddingRequest) -> Dict[str, Any]:
     body: Dict[str, Any] = {
         "model": request.model,
@@ -592,23 +660,46 @@ class OpenAICompatibleChatTransport:
                 before_request()
             limiter.wait_sync()
 
-        if invocation.use_stream:
-            return self._complete_stream(request, base_url, invocation, prepare_request)
+        def via_responses() -> str:
+            payload = self._request_json(
+                base_url=base_url,
+                timeout=invocation.timeout,
+                method="POST",
+                url=f"{base_url.rstrip('/')}/responses",
+                api_key=request.api_key,
+                body=_build_responses_body(request, invocation),
+                max_retries=invocation.effective_options.execution.transport_retries,
+                before_request=prepare_request,
+            )
+            return _extract_responses_text(payload)
 
-        if not base_url:
-            raise ValueError("缺少 Base URL")
+        if base_url and _responses_key(base_url, request.model) in _RESPONSES_ONLY_MODELS:
+            return via_responses()
+        try:
+            if invocation.use_stream:
+                return self._complete_stream(request, base_url, invocation, prepare_request)
 
-        payload = self._request_json(
-            base_url=base_url,
-            timeout=invocation.timeout,
-            method="POST",
-            url=f"{base_url.rstrip('/')}/chat/completions",
-            api_key=request.api_key,
-            body=_build_chat_body(request, invocation),
-            max_retries=invocation.effective_options.execution.transport_retries,
-            before_request=prepare_request,
-        )
-        return _extract_chat_content_from_payload(payload)
+            if not base_url:
+                raise ValueError("缺少 Base URL")
+
+            payload = self._request_json(
+                base_url=base_url,
+                timeout=invocation.timeout,
+                method="POST",
+                url=f"{base_url.rstrip('/')}/chat/completions",
+                api_key=request.api_key,
+                body=_build_chat_body(request, invocation),
+                max_retries=invocation.effective_options.execution.transport_retries,
+                before_request=prepare_request,
+            )
+            return _extract_chat_content_from_payload(payload)
+        except ValueError as error:
+            if not base_url or not _needs_responses_api(error):
+                raise
+            logger.warning("服务商要求 Responses 格式，改用 /responses 重送：%s", request.model)
+            result = via_responses()
+            _RESPONSES_ONLY_MODELS.add(_responses_key(base_url, request.model))
+            return result
 
     def complete_vision(
         self,
@@ -827,23 +918,46 @@ class AsyncOpenAICompatibleTransport:
                 await before_request()
             await limiter.wait()
 
-        if invocation.use_stream:
-            return await self._complete_stream(request, base_url, invocation, prepare_request)
+        async def via_responses() -> str:
+            payload = await self._request_json(
+                base_url=base_url,
+                timeout=invocation.timeout,
+                method="POST",
+                url=f"{base_url.rstrip('/')}/responses",
+                api_key=request.api_key,
+                body=_build_responses_body(request, invocation),
+                max_retries=invocation.effective_options.execution.transport_retries,
+                before_request=prepare_request,
+            )
+            return _extract_responses_text(payload)
 
-        if not base_url:
-            raise ValueError("缺少 Base URL")
+        if base_url and _responses_key(base_url, request.model) in _RESPONSES_ONLY_MODELS:
+            return await via_responses()
+        try:
+            if invocation.use_stream:
+                return await self._complete_stream(request, base_url, invocation, prepare_request)
 
-        payload = await self._request_json(
-            base_url=base_url,
-            timeout=invocation.timeout,
-            method="POST",
-            url=f"{base_url.rstrip('/')}/chat/completions",
-            api_key=request.api_key,
-            body=_build_chat_body(request, invocation),
-            max_retries=invocation.effective_options.execution.transport_retries,
-            before_request=prepare_request,
-        )
-        return _extract_chat_content_from_payload(payload)
+            if not base_url:
+                raise ValueError("缺少 Base URL")
+
+            payload = await self._request_json(
+                base_url=base_url,
+                timeout=invocation.timeout,
+                method="POST",
+                url=f"{base_url.rstrip('/')}/chat/completions",
+                api_key=request.api_key,
+                body=_build_chat_body(request, invocation),
+                max_retries=invocation.effective_options.execution.transport_retries,
+                before_request=prepare_request,
+            )
+            return _extract_chat_content_from_payload(payload)
+        except ValueError as error:
+            if not base_url or not _needs_responses_api(error):
+                raise
+            logger.warning("服务商要求 Responses 格式，改用 /responses 重送：%s", request.model)
+            result = await via_responses()
+            _RESPONSES_ONLY_MODELS.add(_responses_key(base_url, request.model))
+            return result
 
     async def complete_vision(
         self,
