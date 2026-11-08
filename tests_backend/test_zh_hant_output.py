@@ -178,3 +178,42 @@ def test_pipeline_retranslates_bubbles_left_in_japanese():
     )
     assert result == ["好舒服", "臉頰的肉和舌頭滑溜溜地蠕動著", "まだ日本語のまま"]
     assert calls == [["原文2"], ["拒絕"]]
+
+
+def test_japanese_kanji_left_in_translation_become_traditional():
+    """模型把日文漢字原樣留下（変態、沢田、様子）時，譯文裡不能出現像簡體的日本字形。"""
+    from src.shared.zh_hant import ensure_traditional_for_render, postprocess_translation
+
+    assert postprocess_translation("変態！") == "變態！"
+    assert postprocess_translation("沢田同學") == "澤田同學"
+    assert postprocess_translation("這個様子不對勁") == "這個樣子不對勁"
+    assert postprocess_translation("説好的発表會呢") == "說好的發表會呢"
+    assert ensure_traditional_for_render("一定要続下去") == "一定要續下去"
+
+
+def test_japanese_forms_that_are_normal_chinese_stay():
+    from src.shared.zh_hant import japanese_kanji_to_traditional, postprocess_translation
+
+    for text in ("給予", "欠你的", "山峰", "床上", "秘密", "白痴", "一群人", "為什麼", "才不要", "連續", "嘴唇", "抽煙"):
+        assert japanese_kanji_to_traditional(text) == text
+        assert postprocess_translation(text) == text
+
+
+def test_no_simplified_or_japanese_only_forms_survive():
+    """簡體專用字、日本新字體都不能留在最後的譯文裡。"""
+    from pathlib import Path
+
+    from src.shared.zh_hant import _JP_SHINJITAI, postprocess_translation
+
+    dictionary = Path("src/third_party/opencc/dictionary/STCharacters.txt")
+    simplified_only = set()
+    for line in dictionary.read_text(encoding="utf-8").splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[0] not in parts[1].split():
+            simplified_only.add(parts[0])
+    # 台灣也用的寫法（OpenCC s2twp 本來就保留）
+    simplified_only -= set("峰床灶痴秘粽群苎")
+    out = postprocess_translation("".join(sorted(simplified_only)))
+    assert not [c for c in out if c in simplified_only]
+    out = postprocess_translation(_JP_SHINJITAI)
+    assert not [c for c in out if c in _JP_SHINJITAI]

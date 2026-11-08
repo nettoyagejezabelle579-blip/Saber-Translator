@@ -2687,7 +2687,7 @@ class TranslationPipelineService:
         for index, payload in enumerate(updated):
             payload["translatedText"] = postprocess_translation(translated[index])
             payload["textboxText"] = (
-                textbox[index] if index < len(textbox) else ""
+                postprocess_translation(textbox[index]) if index < len(textbox) else ""
             )
         checkpoint = self._publish_bubble_update(
             fence,

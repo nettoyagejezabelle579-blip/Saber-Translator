@@ -44,6 +44,9 @@ def _render_vertical_top_y(char: str, font_path: str, font_size: int = 48, start
         max_width=100,
         max_height=100,
         font_family_path=font_path,
+        # 量測以欄頂為基準；預設已改為置中，這裡固定靠上
+        inline_align="start",
+        block_align="start",
     )
     top_y = _top_ink_y(image)
     if top_y is None:
@@ -80,6 +83,9 @@ def _render_vertical_bbox(text: str, font_path: str, font_size: int = 48, start_
         max_width=180,
         max_height=180,
         font_family_path=font_path,
+        # 量測以欄頂為基準；預設已改為置中，這裡固定靠上
+        inline_align="start",
+        block_align="start",
     )
     array = np.array(image.convert("L"))
     y_positions, x_positions = np.where(array < 250)

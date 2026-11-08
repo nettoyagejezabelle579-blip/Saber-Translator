@@ -264,7 +264,7 @@ class InteractivePageOperationService:
 
         values = [postprocess_translation(values[0])]
         payload["translatedText"] = values[0]
-        payload["textboxText"] = textbox[0] if textbox else ""
+        payload["textboxText"] = postprocess_translation(textbox[0]) if textbox else ""
         new_revision = int(page["document_revision"]) + 1
         has_drawable_text = any(
             _payload_text(

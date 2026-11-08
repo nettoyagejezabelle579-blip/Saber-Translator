@@ -96,10 +96,35 @@ def normalize_punctuation(text: str) -> str:
     return _convert_half_width(text)
 
 
+# 模型有時把日文漢字原樣留在譯文裡（人名、沒翻的詞：気、変、沢、様、説…）。
+# 這些是日本新字體，不是簡體字，OpenCC 簡轉繁不會處理，在繁體譯文裡看起來就像簡體字。
+# 先把它們換成繁體（來源：OpenCC JPVariants.txt 反向，再經 s2twp 取台灣字形）。
+# 不轉也是正常中文字的寫法：峰 床 群 粽 秘 痴 欠 予 疏 醋 桝 痺 弁 偽 稜 御 才 連 唇 煙 芸 緒 遙 為。
+_JP_SHINJITAI = (
+    "乗亜仏仮伝価倹児両剰剣剤労勲勧巻呉呪唖単噛厳圏囲円図団増圧塁壊壌壱奨粧嬢実寛専対巌巣帯厠廃広庁弾従徴徳恵悪悩応懐戦戸戻払"
+    "抜拝挿掲掻揺捜択撃拠拡摂撹収効勅晩曁暦暁曽査桟楡栄楽様検桜権歓歩歳歴帰殻毎気汚渉涙浄渇溌渓満渋沢済浜滝瀬焔焼営犠猟獣産畳"
+    "痩発皐砕稲頴穂穏穣竃粋絶糸経緑縁県縦総繋繍縄絵継続繊缶聡聴粛脳臓挙舎茘荘薫蔵薬処蛍蝋覚覧観説謡証訳読変譲豊弐売頼賛贋軽輌"
+    "転逓遅辺郷酔醗醤醸釈舗録銭錬鉄鋳鉱閲関陥険隠雑鶏覇霊顔顕騒駆験駅髄髪闘鼈鴎鹸塩黒黙斉斎歯齢竜亀"
+)
+_JP_TRADITIONAL = (
+    "乘亞佛假傳價儉兒兩剩劍劑勞勳勸卷吳咒啞單嚙嚴圈圍圓圖團增壓壘壞壤壹奬妝孃實寬專對巖巢帶廁廢廣廳彈從徵德惠惡惱應懷戰戶戾拂"
+    "拔拜插揭搔搖搜擇擊據擴攝攪收效敕晚暨曆曉曾查棧榆榮樂樣檢櫻權歡步歲歷歸殼每氣汙涉淚淨渴潑溪滿澀澤濟濱瀧瀨焰燒營犧獵獸產疊"
+    "瘦發皋碎稻穎穗穩穰灶粹絕絲經綠緣縣縱總繫繡繩繪繼續纖罐聰聽肅腦臟舉舍荔莊薰藏藥處螢蠟覺覽觀說謠證譯讀變讓豐貳賣賴贊贗輕輛"
+    "轉遞遲邊鄉醉醱醬釀釋鋪錄錢鍊鐵鑄鑛閱關陷險隱雜雞霸靈顏顯騷驅驗驛髓髮鬥鱉鷗鹼鹽黑默齊齋齒齡龍龜"
+)
+_JP_TO_TRADITIONAL = str.maketrans(_JP_SHINJITAI, _JP_TRADITIONAL)
+
+
+def japanese_kanji_to_traditional(text: str) -> str:
+    """把留在譯文裡的日本新字體換成繁體字（気→氣、変→變、沢→澤）。"""
+    return text.translate(_JP_TO_TRADITIONAL)
+
+
 def to_traditional(text: str, region: str | None = None) -> str:
     region = configured_region() if region is None else region
     if not region:
         return text
+    text = japanese_kanji_to_traditional(text)
     converter = _converter(_OPENCC_CONFIGS[region])
     if converter is None:
         return text
